@@ -111,45 +111,6 @@
            DOWNLOAD APP BUTTON
         ===================================================== */
 
-        .nav-download-btn {
-            display: inline-flex;
-
-            align-items: center;
-            justify-content: center;
-
-            gap: 6px;
-
-            background: #ff8c00;
-
-            color: #1a1a1a !important;
-
-            padding: 8px 18px;
-
-            border-radius: 50px;
-
-            font-weight: 700;
-
-            font-size: 0.9rem;
-
-            text-decoration: none;
-
-            transition: all 0.3s ease;
-
-            border: 2px solid #ff8c00;
-        }
-
-        .nav-download-btn:hover {
-            background: #e07b00 !important;
-
-            transform: scale(1.05);
-
-            color: #1a1a1a !important;
-        }
-
-        .nav-download-btn:active {
-            transform: scale(0.95);
-        }
-
         /* =====================================================
            TITLE SECTION
         ===================================================== */
@@ -455,14 +416,6 @@
                 font-size: 12px;
             }
 
-            .nav-download-btn {
-                padding: 6px 12px;
-
-                font-size: 0.75rem;
-
-                gap: 4px;
-            }
-
             .header-text {
                 margin-top: 85px;
 
@@ -552,14 +505,6 @@
 
             .nav-links a {
                 font-size: 10px;
-            }
-
-            .nav-download-btn {
-                padding: 5px 9px;
-
-                font-size: 0.68rem;
-
-                border-width: 1px;
             }
 
             .header-text {
@@ -658,13 +603,6 @@
 
             <a href="auth/register.php">
                 Register
-            </a>
-
-            <a
-                href="carbnb_install.php"
-                class="nav-download-btn"
-            >
-                📱 Download App
             </a>
 
         </div>
