@@ -1,0 +1,315 @@
+/* =========================
+   GLOBAL
+========================= */
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+    font-family:'Segoe UI', Arial, sans-serif;
+}
+
+body{
+   background:#1e1e1e;
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    padding:20px;
+    color:#cfcfcf;
+}
+
+
+
+/* =========================
+   MAIN WRAPPER
+========================= */
+
+.register-wrapper{
+
+    width:100%;
+    max-width:1200px;
+
+    display:flex;
+
+    background:#2a2a2a;
+
+    border-radius:15px;
+
+    overflow:hidden;
+
+    box-shadow:
+    0 0 25px rgba(0,0,0,.5);
+}
+
+/* =========================
+   LEFT PANEL
+========================= */
+
+.register-left{
+
+    width:45%;
+
+    padding:40px;
+
+    background:#252525;
+}
+
+.register-left h2{
+
+    color:#ffd700;
+
+    margin-bottom:25px;
+
+    text-align:center;
+}
+
+.register-left h2::after{
+
+    content:"";
+
+    display:block;
+
+    width:60px;
+
+    height:3px;
+
+    background:#00bfff;
+
+    margin:10px auto;
+
+    border-radius:10px;
+}
+
+/* =========================
+   RIGHT PANEL
+========================= */
+
+.register-right{
+
+    width:55%;
+
+    padding:40px;
+}
+
+.register-right h2{
+
+    color:#ffd700;
+
+    margin-bottom:25px;
+
+    text-align:center;
+}
+
+.register-right h2::after{
+
+    content:"";
+
+    display:block;
+
+    width:60px;
+
+    height:3px;
+
+    background:#00bfff;
+
+    margin:10px auto;
+
+    border-radius:10px;
+}
+
+/* =========================
+   INPUTS
+========================= */
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+select{
+
+    width:100%;
+
+    padding:14px;
+
+    margin-bottom:15px;
+
+    border:1px solid #444;
+
+    border-radius:10px;
+
+    background:#1e1e1e;
+
+    color:#cfcfcf;
+
+    font-size:15px;
+}
+
+input:focus,
+select:focus{
+
+    outline:none;
+
+    border-color:#00bfff;
+
+    box-shadow:
+    0 0 10px rgba(0,191,255,.3);
+}
+
+/* =========================
+   DOCUMENT AREA
+========================= */
+
+.document-group{
+
+    display:none;
+
+    animation:fadeIn .3s ease;
+}
+
+.document-group h3{
+
+    color:#ffd700;
+
+    margin-bottom:15px;
+}
+
+.document-group label{
+
+    display:block;
+
+    margin-bottom:5px;
+
+    color:#cfcfcf;
+
+    font-size:14px;
+}
+
+.document-group input[type="file"]{
+
+    width:100%;
+
+    padding:10px;
+
+    margin-bottom:15px;
+
+    border:1px solid #444;
+
+    border-radius:10px;
+
+    background:#1e1e1e;
+
+    color:#cfcfcf;
+}
+
+.document-group small{
+
+    display:block;
+
+    margin-top:10px;
+
+    color:#999;
+
+    line-height:1.5;
+}
+
+.document-group p{
+
+    margin-top:10px;
+
+    color:#999;
+}
+
+/* =========================
+   BUTTON
+========================= */
+
+button{
+
+    width:100%;
+
+    padding:14px;
+
+    margin-top:20px;
+
+    border:none;
+
+    border-radius:10px;
+
+    background:#00bfff;
+
+    color:#fff;
+
+    font-size:16px;
+
+    font-weight:600;
+
+    cursor:pointer;
+}
+
+button:hover{
+
+    background:#0099cc;
+}
+
+/* =========================
+   ERROR MESSAGE
+========================= */
+
+.error-message{
+
+    background:rgba(255,92,92,.15);
+
+    color:#ff6b6b;
+
+    border-left:4px solid #ff6b6b;
+
+    padding:12px;
+
+    margin-bottom:15px;
+
+    border-radius:8px;
+}
+
+/* =========================
+   ANIMATION
+========================= */
+
+@keyframes fadeIn{
+
+    from{
+        opacity:0;
+        transform:translateY(10px);
+    }
+
+    to{
+        opacity:1;
+        transform:translateY(0);
+    }
+}
+
+/* =========================
+   MOBILE
+========================= */
+
+@media(max-width:900px){
+
+    .register-wrapper{
+
+        flex-direction:column;
+    }
+
+    .register-left,
+    .register-right{
+
+        width:100%;
+    }
+}
+
+@media(max-width:480px){
+
+    .register-left,
+    .register-right{
+
+        padding:20px;
+    }
+}

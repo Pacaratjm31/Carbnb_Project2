@@ -1,0 +1,310 @@
+/* =========================
+   GLOBAL
+========================= */
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+    font-family:'Segoe UI', Arial, sans-serif;
+}
+
+body{
+    background:#1e1e1e;
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    padding:20px;
+    color:#cfcfcf;
+}
+
+/* =========================
+   FACE CONTAINER
+========================= */
+
+.face-container{
+
+    width:100%;
+    max-width:750px;
+
+    background:#2a2a2a;
+
+    padding:35px;
+
+    border-radius:15px;
+
+    box-shadow:
+        0 0 20px rgba(0,0,0,.4);
+
+    animation:fadeIn .5s ease;
+}
+
+/* =========================
+   TITLE
+========================= */
+
+.face-container h2{
+
+    text-align:center;
+
+    color:#ffd700;
+
+    margin-bottom:15px;
+
+    font-size:2rem;
+
+    font-weight:700;
+}
+
+.face-container h2::after{
+
+    content:"";
+
+    display:block;
+
+    width:60px;
+
+    height:3px;
+
+    background:#00bfff;
+
+    margin:10px auto 0;
+
+    border-radius:10px;
+}
+
+/* =========================
+   INSTRUCTION
+========================= */
+
+.instruction{
+
+    text-align:center;
+
+    color:#cfcfcf;
+
+    margin-bottom:25px;
+
+    line-height:1.5;
+
+    font-size:15px;
+}
+
+/* =========================
+   CAMERA WRAPPER
+========================= */
+
+.camera-wrapper{
+
+    position:relative;
+
+    width:100%;
+
+    overflow:hidden;
+
+    border-radius:12px;
+
+    border:2px solid #444;
+
+    background:#111;
+}
+
+/* =========================
+   VIDEO
+========================= */
+
+#video{
+
+    width:100%;
+
+    display:block;
+
+    border-radius:12px;
+
+    min-height:450px;
+
+    object-fit:cover;
+}
+
+/* =========================
+   CANVAS
+========================= */
+
+#canvas{
+
+    position:absolute;
+
+    top:0;
+    left:0;
+
+    width:100%;
+    height:100%;
+
+    pointer-events:none;
+}
+
+/* =========================
+   STATUS MESSAGE
+========================= */
+
+.status-message{
+
+    margin-top:20px;
+
+    text-align:center;
+
+    font-weight:600;
+
+    font-size:15px;
+
+    color:#ffd700;
+}
+
+/* =========================
+   SUCCESS MESSAGE
+========================= */
+
+.success-message{
+
+    background:rgba(76,175,80,.15);
+
+    color:#6dd56f;
+
+    border-left:4px solid #4caf50;
+
+    padding:12px;
+
+    margin-top:15px;
+
+    border-radius:8px;
+}
+
+/* =========================
+   ERROR MESSAGE
+========================= */
+
+.error-message{
+
+    background:rgba(255,92,92,.15);
+
+    color:#ff6b6b;
+
+    border-left:4px solid #ff6b6b;
+
+    padding:12px;
+
+    margin-top:15px;
+
+    border-radius:8px;
+}
+
+/* =========================
+   BUTTON
+========================= */
+
+#verifyBtn{
+
+    width:100%;
+
+    margin-top:20px;
+
+    padding:14px;
+
+    border:none;
+
+    border-radius:10px;
+
+    background:#00bfff;
+
+    color:#fff;
+
+    font-size:16px;
+
+    font-weight:600;
+
+    cursor:pointer;
+
+    transition:.3s;
+}
+
+#verifyBtn:hover{
+
+    background:#0099cc;
+
+    transform:translateY(-2px);
+}
+
+#verifyBtn:active{
+
+    transform:translateY(0);
+}
+
+#verifyBtn:disabled{
+
+    background:#555;
+
+    color:#999;
+
+    cursor:not-allowed;
+
+    transform:none;
+}
+
+/* =========================
+   ANIMATION
+========================= */
+
+@keyframes fadeIn{
+
+    from{
+        opacity:0;
+        transform:translateY(20px);
+    }
+
+    to{
+        opacity:1;
+        transform:translateY(0);
+    }
+}
+
+/* =========================
+   TABLET
+========================= */
+
+@media(max-width:768px){
+
+    .face-container{
+        padding:25px;
+    }
+
+    .face-container h2{
+        font-size:1.7rem;
+    }
+
+    #video{
+        min-height:350px;
+    }
+}
+
+/* =========================
+   MOBILE
+========================= */
+
+@media(max-width:480px){
+
+    .face-container{
+
+        padding:20px;
+
+        border-radius:12px;
+    }
+
+    .face-container h2{
+        font-size:1.5rem;
+    }
+
+    #video{
+        min-height:280px;
+    }
+}

@@ -1,0 +1,46 @@
+/* =====================================================
+   Carbnb Admin — Base Extras
+   Always-on rules only (not screen-size dependent).
+   All @media rules that used to live in this file have
+   been consolidated into admin_responsive.css, loaded
+   right after this file on every page, so there is a
+   single source of truth for tablet/mobile behavior.
+===================================================== */
+
+.info-label {
+    color: #888;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.info-value {
+    font-size: 1.2rem;
+    margin-bottom: 20px;
+    color: #eee;
+}
+
+.table-wrapper {
+  width: 100%;
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  -webkit-overflow-scrolling: touch; /* smooth momentum scroll on iOS */
+}
+
+.table-wrapper .table {
+  border-radius: 12px;
+  overflow: hidden; /* keeps corners clean, no broken borders on scroll */
+}
+
+.vehicle-image,
+.doc-item img,
+.doc-item video,
+.face-preview img {
+  max-width: 100%;
+}
+
+.card canvas {
+  width: 100% !important;
+  max-width: 100%;
+}
