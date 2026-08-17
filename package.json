@@ -1,0 +1,8 @@
+{
+  "name": "carbnb-fullstack",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "php -S localhost:8000"
+  }
+}

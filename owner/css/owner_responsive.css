@@ -1,0 +1,825 @@
+/* =====================================================
+   Carbnb Owner Panel — Responsive Layer
+   Mobile-first responsive design for owner panel
+   Load this AFTER owner_style.css
+   ===================================================== */
+
+/* -----------------------------------------------------
+   GLOBAL SAFETY NET
+   Nothing should ever be wider than the viewport.
+----------------------------------------------------- */
+html,
+body {
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100vw;
+}
+
+img,
+video,
+canvas,
+iframe,
+table {
+    max-width: 100%;
+}
+
+/* =======================================================
+   TABLET — 900px and below
+   ======================================================= */
+@media (max-width: 900px) {
+    /* Off-canvas sidebar */
+    .sidebar {
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    .main-content {
+        margin-left: 0;
+        width: 100%;
+        max-width: 100vw;
+        overflow-x: hidden;
+    }
+
+    .topbar {
+        padding: 14px 18px;
+    }
+
+    .sidebar-toggle {
+        display: inline-flex !important;
+    }
+
+    .sidebar-close {
+        display: block !important;
+    }
+
+    body.sidebar-open {
+        overflow: hidden;
+    }
+
+    .page {
+        padding: 18px;
+        gap: 14px;
+    }
+
+    .card,
+    .form-card {
+        padding: 14px;
+    }
+
+    .hero-card {
+        padding: 16px;
+    }
+
+    .stats-grid,
+    .content-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .stat-box {
+        padding: 12px;
+    }
+
+    .stat-box h3 {
+        font-size: 0.75rem;
+    }
+
+    .stat-box p {
+        font-size: 1.1rem;
+    }
+
+    /* ===================================================
+       SWITCH: Show mobile cards, hide desktop tables
+       =================================================== */
+    .only-desktop {
+        display: none !important;
+    }
+
+    .only-mobile {
+        display: block !important;
+    }
+
+    /* Vehicle cards for manage_vehicles.php */
+    .vehicle-list-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .vehicle-list-card {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+        transition: all 0.2s ease;
+    }
+
+    .vehicle-list-card:hover {
+        border-color: rgba(245, 185, 66, 0.3);
+    }
+
+    .vehicle-list-card-header {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--accent);
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .vehicle-list-card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .vehicle-list-card-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        gap: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .vehicle-list-card-row:last-child {
+        border-bottom: none;
+    }
+
+    .vehicle-list-card-row .label {
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+
+    .vehicle-list-card-row .value {
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-align: right;
+        word-break: break-word;
+    }
+
+    .vehicle-list-card-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+    }
+
+    .vehicle-list-card-actions form {
+        width: 100%;
+    }
+
+    .vehicle-list-card-actions .action-btn-small {
+        width: 100%;
+        justify-content: center;
+        padding: 10px;
+        font-size: 0.85rem;
+        min-height: 44px;
+    }
+
+    /* Booking cards for booking_requests.php */
+    .booking-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .booking-card {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+    }
+
+    .booking-card-header {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--accent);
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .booking-card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .booking-card-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        gap: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .booking-card-row:last-child {
+        border-bottom: none;
+    }
+
+    .booking-card-row .label {
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+
+    .booking-card-row .value {
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-align: right;
+    }
+
+    /* History cards for rental_history.php */
+    .history-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .history-card {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+    }
+
+    .history-card-header {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--accent);
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .history-card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .history-card-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        gap: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .history-card-row:last-child {
+        border-bottom: none;
+    }
+
+    .history-card-row .label {
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+
+    .history-card-row .value {
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-align: right;
+    }
+
+    /* Review cards for owner_reviews.php */
+    .review-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .review-card {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+    }
+
+    .review-card-header {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--accent);
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .review-card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .review-card-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding: 4px 0;
+        gap: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .review-card-row:last-child {
+        border-bottom: none;
+    }
+
+    .review-card-row .label {
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 500;
+        flex-shrink: 0;
+    }
+
+    .review-card-row .value {
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-align: right;
+        word-break: break-word;
+        max-width: 60%;
+    }
+
+    .review-card-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+    }
+
+    .review-card-actions .action-btn {
+        width: 100%;
+        justify-content: center;
+        padding: 10px;
+        min-height: 44px;
+    }
+
+    /* Message cards for owner_message.php */
+    .message-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .message-card {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+    }
+
+    .message-card-header {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--accent);
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .message-card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .message-card-text {
+        color: var(--muted);
+        font-size: 0.9rem;
+        padding: 4px 0;
+        margin: 0;
+    }
+
+    .message-card-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        gap: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .message-card-row:last-child {
+        border-bottom: none;
+    }
+
+    .message-card-row .label {
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+
+    .message-card-row .value {
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-align: right;
+    }
+
+    .message-card-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+    }
+
+    .message-card-actions form,
+    .message-card-actions button {
+        width: 100%;
+    }
+
+    .message-card-actions .action-btn-small {
+        width: 100%;
+        justify-content: center;
+        padding: 10px;
+        min-height: 44px;
+    }
+
+    /* Maintenance cards for vehicle_status.php */
+    .maintenance-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .maintenance-card {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+    }
+
+    .maintenance-card-header {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--accent);
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .maintenance-card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .maintenance-card-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        gap: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .maintenance-card-row:last-child {
+        border-bottom: none;
+    }
+
+    .maintenance-card-row .label {
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+
+    .maintenance-card-row .value {
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-align: right;
+    }
+
+    /* Quick actions - mobile */
+    .quick-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .quick-actions .action-btn {
+        width: 100%;
+        text-align: center;
+        padding: 14px;
+        min-height: 48px;
+    }
+
+    /* File upload - mobile */
+    .file-upload-wrap {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .file-upload-btn {
+        text-align: center;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .file-upload-name {
+        text-align: center;
+    }
+
+    /* Modal - mobile */
+    .modal-content {
+        width: calc(100% - 32px);
+        margin: 16px auto;
+        padding: 16px;
+        max-width: 100%;
+    }
+
+    .modal-content .modal-actions {
+        flex-direction: column;
+    }
+
+    .modal-content .modal-actions button {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    /* Hero card - mobile */
+    .hero-card {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .hero-card .topbar-action {
+        width: 100%;
+        text-align: center;
+    }
+
+    /* Stats grid on mobile - 2 columns */
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    /* Form grid - mobile */
+    .form-grid-2 {
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+    }
+}
+
+/* =======================================================
+   MOBILE — 600px and below
+   ======================================================= */
+@media (max-width: 600px) {
+    .page {
+        padding: 12px;
+        gap: 12px;
+    }
+
+    .topbar {
+        padding: 10px 12px;
+        flex-wrap: wrap;
+    }
+
+    .topbar h1 {
+        font-size: 0.95rem;
+        order: 2;
+        flex: 1;
+    }
+
+    .topbar-action {
+        font-size: 0.75rem;
+        padding: 5px 12px;
+        order: 3;
+    }
+
+    .sidebar-toggle {
+        order: 1;
+    }
+
+    .card,
+    .form-card {
+        padding: 12px;
+        border-radius: 12px;
+    }
+
+    .section-title {
+        font-size: 0.9rem;
+    }
+
+    .stats-grid,
+    .content-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .stat-box {
+        padding: 10px;
+    }
+
+    .stat-box h3 {
+        font-size: 0.65rem;
+    }
+
+    .stat-box p {
+        font-size: 0.95rem;
+    }
+
+    .vehicle-list-card,
+    .booking-card,
+    .history-card,
+    .review-card,
+    .message-card,
+    .maintenance-card {
+        padding: 12px;
+    }
+
+    .vehicle-list-card-header,
+    .booking-card-header,
+    .history-card-header,
+    .review-card-header,
+    .message-card-header,
+    .maintenance-card-header {
+        font-size: 0.9rem;
+    }
+
+    .vehicle-list-card-row .label,
+    .booking-card-row .label,
+    .history-card-row .label,
+    .review-card-row .label,
+    .message-card-row .label,
+    .maintenance-card-row .label {
+        font-size: 0.7rem;
+    }
+
+    .vehicle-list-card-row .value,
+    .booking-card-row .value,
+    .history-card-row .value,
+    .review-card-row .value,
+    .message-card-row .value,
+    .maintenance-card-row .value {
+        font-size: 0.8rem;
+        max-width: 55%;
+    }
+
+    .vehicle-list-card-actions .action-btn-small,
+    .booking-card-actions .action-btn-small,
+    .review-card-actions .action-btn-small,
+    .message-card-actions .action-btn-small {
+        font-size: 0.75rem;
+        padding: 8px 12px;
+        min-height: 40px;
+    }
+
+    .action-btn-small {
+        font-size: 0.7rem;
+        padding: 6px 12px;
+        min-height: 36px;
+    }
+
+    .status-badge {
+        font-size: 0.65rem;
+        padding: 3px 8px;
+    }
+
+    .alert {
+        padding: 8px 12px;
+        font-size: 0.8rem;
+    }
+
+    .empty-state {
+        font-size: 0.85rem;
+        padding: 16px 0;
+    }
+
+    .sidebar {
+        width: min(240px, 82vw);
+        padding: 16px 12px;
+    }
+
+    .sidebar-header h2 {
+        font-size: 1.05rem;
+    }
+
+    .sidebar-nav a {
+        font-size: 0.85rem;
+        padding: 8px 12px;
+    }
+
+    /* Modal on mobile */
+    .modal-content {
+        padding: 14px;
+        margin: 12px;
+    }
+
+    .modal-content h3 {
+        font-size: 0.95rem;
+    }
+
+    .modal-content textarea {
+        min-height: 80px;
+        font-size: 0.85rem;
+    }
+
+    .hero-card h2 {
+        font-size: 1rem;
+    }
+
+    .hero-card p {
+        font-size: 0.8rem;
+    }
+}
+
+/* =======================================================
+   EXTRA SMALL — 400px and below
+   ======================================================= */
+@media (max-width: 400px) {
+    .page {
+        padding: 8px;
+        gap: 10px;
+    }
+
+    .topbar h1 {
+        font-size: 0.85rem;
+    }
+
+    .topbar-action {
+        font-size: 0.65rem;
+        padding: 4px 10px;
+    }
+
+    .stats-grid,
+    .content-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+    }
+
+    .stat-box {
+        padding: 8px;
+    }
+
+    .stat-box h3 {
+        font-size: 0.6rem;
+    }
+
+    .stat-box p {
+        font-size: 0.85rem;
+    }
+
+    .card,
+    .form-card {
+        padding: 10px;
+    }
+
+    .vehicle-list-card {
+        padding: 10px;
+    }
+
+    .vehicle-list-card-row {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .vehicle-list-card-row .value {
+        max-width: 100%;
+        text-align: left;
+    }
+
+    .section-title {
+        font-size: 0.85rem;
+    }
+
+    .sidebar {
+        width: 85vw;
+        padding: 14px 10px;
+    }
+}
+
+/* =======================================================
+   DESKTOP OVERRIDE — Ensure mobile cards never show on desktop
+   ======================================================= */
+@media (min-width: 901px) {
+    .only-mobile {
+        display: none !important;
+    }
+
+    .only-desktop {
+        display: block !important;
+    }
+
+    .vehicle-list-cards,
+    .booking-cards,
+    .history-cards,
+    .review-cards,
+    .message-cards,
+    .maintenance-cards {
+        display: none !important;
+    }
+}
