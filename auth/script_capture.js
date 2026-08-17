@@ -1,219 +1,260 @@
 (async () => {
 
     const video = document.getElementById("video");
-    const captureBtn = document.getElementById("captureBtn");
+    const captureBtn = document.getElementById("captureBtn");  // FIXED: Changed from verifyBtn
     const statusMessage = document.getElementById("statusMessage");
     const faceImageInput = document.getElementById("faceImage");
     const faceEncodingInput = document.getElementById("faceEncoding");
     const faceForm = document.getElementById("faceForm");
+    const loadingOverlay = document.getElementById("loadingOverlay");
+    const faceIndicator = document.getElementById("faceIndicator");
 
+    let faceDetected = false;
     let isCapturing = false;
     let modelsLoaded = false;
     let detectionInterval = null;
+    let currentDetection = null;
+    let modelLoadAttempts = 0;
+    let videoReady = false;
+    const MAX_MODEL_ATTEMPTS = 3;
+    const MIN_FACE_SIZE = 40;
 
-    // ============================================================
-    // STEP 1: START CAMERA IMMEDIATELY
-    // ============================================================
-    startCamera();
-
-    // ============================================================
-    // STEP 2: LOAD MODELS IN PARALLEL (Background)
-    // ============================================================
-    async function loadModels() {
-        try {
-            statusMessage.textContent = "Loading face models...";
-
-            // Force CPU backend for WebView compatibility
-            if (window.faceapi && faceapi.tf && faceapi.tf.setBackend) {
-                try {
-                    await faceapi.tf.setBackend("cpu");
-                    await faceapi.tf.ready();
-                } catch (backendError) {
-                    console.warn("Could not force CPU backend:", backendError);
-                }
-            }
-
-            // ============================================================
-            // FIXED: Load all models IN PARALLEL (not sequentially)
-            // ============================================================
-            await Promise.all([
-                faceapi.nets.tinyFaceDetector.loadFromUri(
-                    "../face-api.js-models-master/tiny_face_detector"
-                ),
-                faceapi.nets.faceLandmark68Net.loadFromUri(
-                    "../face-api.js-models-master/face_landmark_68"
-                ),
-                faceapi.nets.faceRecognitionNet.loadFromUri(
-                    "../face-api.js-models-master/face_recognition"
-                )
-            ]);
-
-            modelsLoaded = true;
-            statusMessage.textContent = "Models loaded. Face detection active.";
-            startFaceDetection();
-
-        } catch (error) {
-            console.error(error);
-            statusMessage.textContent = "Failed to load face models.";
-        }
+    function updateStatus(message, type = 'info') {
+        statusMessage.textContent = message;
+        statusMessage.className = 'status-message ' + type;
+        console.log("[Face Capture]", message);
     }
 
-    // ============================================================
-    // STEP 3: START CAMERA - LOWER RESOLUTION FOR SPEED
-    // ============================================================
     async function startCamera() {
         try {
-            // FIXED: Use lower resolution for faster startup
+            updateStatus("Starting camera...", 'info');
+            
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: {
                     width: { ideal: 640 },
                     height: { ideal: 480 },
                     facingMode: "user"
-                }
+                },
+                audio: false
             });
-
+            
             video.srcObject = stream;
             
-            // Show camera is starting
-            statusMessage.textContent = "Camera starting...";
+            await new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    video.play();
+                    resolve();
+                };
+            });
 
+            await new Promise((resolve) => {
+                video.onplaying = () => {
+                    videoReady = true;
+                    resolve();
+                };
+                if (!video.paused && !video.ended) {
+                    videoReady = true;
+                    resolve();
+                }
+            });
+            
+            updateStatus("Camera ready. Loading models...", 'info');
+            
         } catch (error) {
-            console.error(error);
-            statusMessage.textContent = "Unable to access camera.";
+            console.error("Camera error:", error);
+            updateStatus("Camera error: " + error.message, 'error');
+            captureBtn.disabled = true;
+            loadingOverlay.classList.add('hidden');
         }
     }
 
-    // ============================================================
-    // STEP 4: START FACE DETECTION ONLY AFTER MODELS LOADED
-    // ============================================================
+    async function loadModels() {
+        try {
+            updateStatus("Loading face models...", 'info');
+            console.log("Starting model load...");
+            
+            if (typeof faceapi === 'undefined') {
+                throw new Error('face-api.js not loaded');
+            }
+
+            if (faceapi.tf && faceapi.tf.setBackend) {
+                try {
+                    await faceapi.tf.setBackend('cpu');
+                    await faceapi.tf.ready();
+                    console.log("TensorFlow backend set to CPU");
+                } catch (e) {
+                    console.warn("Could not set CPU backend:", e);
+                }
+            }
+
+            const modelPath = '../face-api.js-models-master';
+            
+            await Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri(modelPath + '/tiny_face_detector'),
+                faceapi.nets.faceLandmark68Net.loadFromUri(modelPath + '/face_landmark_68'),
+                faceapi.nets.faceRecognitionNet.loadFromUri(modelPath + '/face_recognition')
+            ]);
+
+            modelsLoaded = true;
+            loadingOverlay.classList.add('hidden');
+            console.log("Models loaded successfully!");
+            updateStatus("Face detection active. Show your face.", 'success');
+            
+            setTimeout(startFaceDetection, 500);
+
+        } catch (error) {
+            console.error("Model loading error:", error);
+            modelLoadAttempts++;
+            
+            if (modelLoadAttempts < MAX_MODEL_ATTEMPTS) {
+                updateStatus("Retrying model load (" + (modelLoadAttempts + 1) + "/" + MAX_MODEL_ATTEMPTS + ")...", 'warning');
+                setTimeout(loadModels, 2000);
+            } else {
+                updateStatus("Failed to load face models. Check console.", 'error');
+                loadingOverlay.classList.add('hidden');
+                captureBtn.disabled = true;
+            }
+        }
+    }
+
     function startFaceDetection() {
         if (detectionInterval) {
             clearInterval(detectionInterval);
         }
 
+        if (!videoReady) {
+            updateStatus("Waiting for camera...", 'info');
+            setTimeout(startFaceDetection, 500);
+            return;
+        }
+
+        updateStatus("Looking for face...", 'info');
+        console.log("Face detection started");
+
+        let noFaceCount = 0;
+
         detectionInterval = setInterval(async () => {
-            // Only run detection if models are loaded and video is playing
-            if (!modelsLoaded || video.paused || video.ended) {
+            if (!modelsLoaded || !videoReady) {
                 return;
             }
 
             try {
-                const detection = await faceapi
-                    .detectSingleFace(
-                        video,
-                        new faceapi.TinyFaceDetectorOptions({
-                            inputSize: 416,
-                            scoreThreshold: 0.4
-                        })
-                    )
-                    .withFaceLandmarks();
+                if (video.readyState < 2) {
+                    return;
+                }
+
+                const detection = await faceapi.detectSingleFace(
+                    video,
+                    new faceapi.TinyFaceDetectorOptions({
+                        inputSize: 512,
+                        scoreThreshold: 0.3
+                    })
+                );
 
                 if (!detection) {
+                    faceDetected = false;
                     captureBtn.disabled = true;
-                    statusMessage.textContent = "No face detected.";
+                    faceIndicator.classList.remove('show');
+                    currentDetection = null;
+                    noFaceCount++;
+                    
+                    if (noFaceCount === 10) {
+                        updateStatus("No face detected. Show your face to the camera.", 'info');
+                    }
                     return;
                 }
 
-                const box = detection.detection.box;
-                const faceWidth = box.width;
-                const faceHeight = box.height;
-
-                if (faceWidth < 80 || faceHeight < 80) {
+                noFaceCount = 0;
+                const box = detection.box;
+                console.log("Face detected:", box.width, "x", box.height);
+                
+                if (box.width < MIN_FACE_SIZE || box.height < MIN_FACE_SIZE) {
+                    faceDetected = false;
                     captureBtn.disabled = true;
-                    statusMessage.textContent = "Move closer to the camera.";
+                    faceIndicator.classList.remove('show');
+                    currentDetection = null;
+                    updateStatus("Move closer to the camera.", 'warning');
                     return;
                 }
 
-                const landmarks = detection.landmarks;
-                const leftEye = landmarks.getLeftEye();
-                const rightEye = landmarks.getRightEye();
-
-                if (leftEye.length === 0 || rightEye.length === 0) {
-                    captureBtn.disabled = true;
-                    statusMessage.textContent = "Remove cap or glasses.";
-                    return;
-                }
-
+                faceDetected = true;
+                faceIndicator.classList.add('show');
+                currentDetection = detection;
                 captureBtn.disabled = false;
-                statusMessage.textContent = "Face detected. Ready to capture.";
+                updateStatus("Face detected! Ready to capture.", 'success');
 
             } catch (error) {
-                // Silently handle detection errors
                 console.warn("Detection error:", error);
             }
-        }, 500);
+        }, 300);
     }
 
-    // ============================================================
-    // STEP 5: START LOADING MODELS IN BACKGROUND
-    // ============================================================
-    // Don't await - let it run in background while camera shows
-    loadModels();
-
-    // ============================================================
-    // STEP 6: VIDEO PLAYING EVENT - Reset detection if needed
-    // ============================================================
-    video.addEventListener("playing", () => {
-        statusMessage.textContent = modelsLoaded ? "Face detection active." : "Loading models...";
-    });
-
-    // ============================================================
-    // STEP 7: CAPTURE BUTTON
-    // ============================================================
-    captureBtn.addEventListener("click", async () => {
-        if (isCapturing) return;
+    async function captureFace() {
+        if (isCapturing) {
+            updateStatus("Capture in progress...", 'info');
+            return;
+        }
         if (!modelsLoaded) {
-            statusMessage.textContent = "Models still loading. Please wait.";
+            updateStatus("Models still loading...", 'warning');
+            return;
+        }
+        if (!faceDetected || !currentDetection) {
+            updateStatus("No face detected.", 'warning');
             return;
         }
 
         isCapturing = true;
         captureBtn.disabled = true;
-        statusMessage.textContent = "Capturing face...";
+        updateStatus("Capturing face...", 'info');
 
         try {
-            const detection = await faceapi
+            const fullDetection = await faceapi
                 .detectSingleFace(
                     video,
                     new faceapi.TinyFaceDetectorOptions({
-                        inputSize: 416,
-                        scoreThreshold: 0.4
+                        inputSize: 512,
+                        scoreThreshold: 0.3
                     })
                 )
                 .withFaceLandmarks()
                 .withFaceDescriptor();
 
-            if (!detection) {
-                statusMessage.textContent = "Face capture failed.";
+            if (!fullDetection) {
+                updateStatus("Face capture failed. Try again.", 'error');
                 captureBtn.disabled = false;
                 isCapturing = false;
                 return;
             }
 
-            const canvas = document.createElement("canvas");
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext("2d");
+            const descriptor = Array.from(fullDetection.descriptor);
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            const imageData = canvas.toDataURL("image/png");
-            const descriptor = Array.from(detection.descriptor);
+            const imageData = canvas.toDataURL('image/png');
 
             faceImageInput.value = imageData;
             faceEncodingInput.value = JSON.stringify(descriptor);
 
-            statusMessage.textContent = "Face captured successfully. Saving...";
+            updateStatus("Face captured! Saving...", 'success');
 
             setTimeout(() => {
                 faceForm.submit();
-            }, 1000);
+            }, 800);
 
         } catch (error) {
-            console.error(error);
-            statusMessage.textContent = "Capture error.";
+            console.error("Capture error:", error);
+            updateStatus("Capture error. Try again.", 'error');
             captureBtn.disabled = false;
             isCapturing = false;
         }
-    });
+    }
+
+    captureBtn.addEventListener('click', captureFace);
+
+    await startCamera();
+    setTimeout(loadModels, 500);
 
 })();

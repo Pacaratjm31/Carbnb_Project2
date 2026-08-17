@@ -3,288 +3,277 @@
     const video = document.getElementById("video");
     const verifyBtn = document.getElementById("verifyBtn");
     const statusMessage = document.getElementById("statusMessage");
+
+    // Get the descriptor from window
     const registeredFaceDescriptor = window.registeredFaceDescriptor || [];
-    const registeredFaceImage = window.registeredFaceImage || "";
+
+    console.log("=== SCRIPT VERIFY START ===");
+    console.log("registeredFaceDescriptor length:", registeredFaceDescriptor.length);
 
     let faceDetected = false;
     let isVerifying = false;
     let modelsLoaded = false;
     let detectionInterval = null;
+    let currentDetection = null;
+    let modelLoadAttempts = 0;
+    let videoReady = false;
+    const MAX_MODEL_ATTEMPTS = 3;
+    const MIN_FACE_SIZE = 80;
 
-    // ============================================================
-    // STEP 1: CHECK REGISTERED TEMPLATE
-    // ============================================================
-    if (!registeredFaceDescriptor.length) {
-        statusMessage.textContent = "No registered face template found.";
+    function updateStatus(message) {
+        statusMessage.textContent = message;
+        console.log("[Face Verify]", message);
+    }
+
+    // CHECK: If no descriptor, show error immediately
+    if (!registeredFaceDescriptor || registeredFaceDescriptor.length === 0) {
+        updateStatus("❌ No registered face template available.");
         verifyBtn.disabled = true;
+        console.error("No face descriptor found in window.registeredFaceDescriptor");
+    } else {
+        console.log("✅ Face descriptor found! Length:", registeredFaceDescriptor.length);
     }
 
-    // ============================================================
-    // STEP 2: START CAMERA IMMEDIATELY
-    // ============================================================
-    startCamera();
-
-    // ============================================================
-    // STEP 3: LOAD MODELS IN PARALLEL (Background)
-    // ============================================================
-    async function loadModels() {
-        try {
-            statusMessage.textContent = "Loading face models...";
-
-            if (window.faceapi && faceapi.tf && faceapi.tf.setBackend) {
-                try {
-                    await faceapi.tf.setBackend("cpu");
-                    await faceapi.tf.ready();
-                } catch (backendError) {
-                    console.warn("Could not force CPU backend:", backendError);
-                }
-            }
-
-            // ============================================================
-            // Load all models IN PARALLEL for speed
-            // ============================================================
-            await Promise.all([
-                faceapi.nets.tinyFaceDetector.loadFromUri("../face-api.js-models-master/tiny_face_detector"),
-                faceapi.nets.faceLandmark68Net.loadFromUri("../face-api.js-models-master/face_landmark_68"),
-                faceapi.nets.faceRecognitionNet.loadFromUri("../face-api.js-models-master/face_recognition")
-            ]);
-
-            modelsLoaded = true;
-            statusMessage.textContent = "Models loaded. Face detection active.";
-            startFaceDetection();
-
-        } catch (error) {
-            console.error(error);
-            statusMessage.textContent = "Failed to load face models.";
-            verifyBtn.disabled = true;
-        }
-    }
-
-    // ============================================================
-    // STEP 4: START CAMERA - LOWER RESOLUTION FOR SPEED
-    // ============================================================
     async function startCamera() {
         try {
+            updateStatus("Starting camera...");
+            
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { 
+                video: {
                     width: { ideal: 640 },
                     height: { ideal: 480 },
                     facingMode: "user"
+                },
+                audio: false
+            });
+            
+            video.srcObject = stream;
+            
+            await new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    video.play();
+                    resolve();
+                };
+            });
+
+            await new Promise((resolve) => {
+                video.onplaying = () => {
+                    videoReady = true;
+                    resolve();
+                };
+                if (!video.paused && !video.ended) {
+                    videoReady = true;
+                    resolve();
                 }
             });
-            video.srcObject = stream;
-            statusMessage.textContent = "Camera starting...";
-
+            
+            updateStatus("Camera ready. Loading models...");
+            
         } catch (error) {
-            console.error(error);
-            statusMessage.textContent = "Unable to access camera. Please check permissions.";
+            console.error("Camera error:", error);
+            updateStatus("Camera error: " + error.message);
             verifyBtn.disabled = true;
         }
     }
 
-    // ============================================================
-    // STEP 5: START FACE DETECTION ONLY AFTER MODELS LOADED
-    // ============================================================
+    async function loadModels() {
+        try {
+            updateStatus("Loading face models...");
+            console.log("Starting model load...");
+            
+            if (typeof faceapi === 'undefined') {
+                throw new Error('face-api.js not loaded');
+            }
+
+            if (faceapi.tf && faceapi.tf.setBackend) {
+                try {
+                    await faceapi.tf.setBackend('cpu');
+                    await faceapi.tf.ready();
+                    console.log("TensorFlow backend set to CPU");
+                } catch (e) {
+                    console.warn("Could not set CPU backend:", e);
+                }
+            }
+
+            const modelPath = '../face-api.js-models-master';
+            
+            await Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri(modelPath + '/tiny_face_detector'),
+                faceapi.nets.faceLandmark68Net.loadFromUri(modelPath + '/face_landmark_68'),
+                faceapi.nets.faceRecognitionNet.loadFromUri(modelPath + '/face_recognition')
+            ]);
+
+            modelsLoaded = true;
+            console.log("Models loaded successfully!");
+            updateStatus("Face detection active.");
+            
+            // Check again if descriptor exists
+            if (!window.registeredFaceDescriptor || window.registeredFaceDescriptor.length === 0) {
+                updateStatus("❌ No registered face template available.");
+                verifyBtn.disabled = true;
+                return;
+            }
+            
+            setTimeout(startFaceDetection, 500);
+
+        } catch (error) {
+            console.error("Model loading error:", error);
+            modelLoadAttempts++;
+            
+            if (modelLoadAttempts < MAX_MODEL_ATTEMPTS) {
+                updateStatus("Retrying model load (" + (modelLoadAttempts + 1) + "/" + MAX_MODEL_ATTEMPTS + ")...");
+                setTimeout(loadModels, 2000);
+            } else {
+                updateStatus("Failed to load face models. Check console.");
+                verifyBtn.disabled = true;
+            }
+        }
+    }
+
     function startFaceDetection() {
         if (detectionInterval) {
             clearInterval(detectionInterval);
         }
 
+        if (!videoReady) {
+            updateStatus("Waiting for camera...");
+            setTimeout(startFaceDetection, 500);
+            return;
+        }
+
+        updateStatus("Looking for face...");
+        console.log("Face detection started");
+
+        let noFaceCount = 0;
+
         detectionInterval = setInterval(async () => {
-            // Only run detection if models are loaded and video is playing
-            if (!modelsLoaded || video.paused || video.ended || !video.srcObject) {
+            if (!modelsLoaded || !videoReady) {
                 return;
             }
 
             try {
-                // ============================================================
-                // FIXED: Use detectSingleFace for better reliability
-                // Lowered scoreThreshold for better detection
-                // ============================================================
+                if (video.readyState < 2) {
+                    return;
+                }
+
                 const detection = await faceapi.detectSingleFace(
                     video,
                     new faceapi.TinyFaceDetectorOptions({
                         inputSize: 512,
-                        scoreThreshold: 0.3  // Lowered from 0.4 for better detection
+                        scoreThreshold: 0.5
                     })
                 );
 
                 if (!detection) {
                     faceDetected = false;
                     verifyBtn.disabled = true;
-                    statusMessage.textContent = "No face detected. Position your face in the camera.";
+                    currentDetection = null;
+                    noFaceCount++;
+                    
+                    if (noFaceCount === 10) {
+                        updateStatus("No face detected. Position your face in the camera.");
+                    }
                     return;
                 }
 
+                noFaceCount = 0;
                 const box = detection.box;
-                const minWidth = 80;
-                const minHeight = 80;
-
-                if (box.width < minWidth || box.height < minHeight) {
+                console.log("Face detected:", box.width, "x", box.height);
+                
+                if (box.width < MIN_FACE_SIZE || box.height < MIN_FACE_SIZE) {
                     faceDetected = false;
                     verifyBtn.disabled = true;
-                    statusMessage.textContent = "Move closer to the camera. (Face too small)";
-                    return;
-                }
-
-                // ============================================================
-                // Check if face is too large (prevents cropping issues)
-                // ============================================================
-                const videoRect = video.getBoundingClientRect();
-                if (box.width > videoRect.width * 0.9 || box.height > videoRect.height * 0.9) {
-                    faceDetected = false;
-                    verifyBtn.disabled = true;
-                    statusMessage.textContent = "Move further from the camera. (Face too large)";
+                    currentDetection = null;
+                    updateStatus("Move closer to the camera.");
                     return;
                 }
 
                 faceDetected = true;
+                currentDetection = detection;
                 verifyBtn.disabled = false;
-                statusMessage.textContent = "✅ Face detected. Ready to verify.";
+                updateStatus("Face detected! Ready to verify.");
 
             } catch (error) {
                 console.warn("Detection error:", error);
-                // Don't disable button on temporary errors
-            }
-        }, 300); // Faster detection (300ms instead of 500ms)
-    }
-
-    // ============================================================
-    // STEP 6: START LOADING MODELS IN BACKGROUND
-    // ============================================================
-    loadModels();
-
-    // ============================================================
-    // STEP 7: VIDEO PLAYING EVENT
-    // ============================================================
-    video.addEventListener("playing", () => {
-        statusMessage.textContent = modelsLoaded ? "Face detection active." : "Loading models...";
-        // Force an immediate detection check
-        setTimeout(() => {
-            if (modelsLoaded && detectionInterval) {
-                // Trigger detection manually
             }
         }, 500);
-    });
+    }
 
-    // ============================================================
-    // STEP 8: HANDLE VIDEO ERRORS
-    // ============================================================
-    video.addEventListener("error", (e) => {
-        console.error("Video error:", e);
-        statusMessage.textContent = "Camera error. Please refresh and try again.";
-        verifyBtn.disabled = true;
-    });
-
-    // ============================================================
-    // STEP 9: VERIFY BUTTON - FIXED
-    // ============================================================
-    verifyBtn.addEventListener("click", async function onClick() {
-        // Prevent multiple clicks
+    async function verifyFace() {
         if (isVerifying) return;
-        
-        // Check if models are loaded
         if (!modelsLoaded) {
-            statusMessage.textContent = "⏳ Models still loading. Please wait...";
+            updateStatus("Models still loading...");
             return;
         }
-
-        // Check if face is detected
-        if (!faceDetected) {
-            statusMessage.textContent = "⚠️ No face detected. Please position your face in the camera.";
+        if (!faceDetected || !currentDetection) {
+            updateStatus("No face detected.");
             return;
         }
-
-        // Check if registered template exists
-        if (!registeredFaceDescriptor.length) {
-            statusMessage.textContent = "❌ No registered face template available.";
+        if (!window.registeredFaceDescriptor || window.registeredFaceDescriptor.length === 0) {
+            updateStatus("❌ No registered face template.");
             verifyBtn.disabled = true;
             return;
         }
 
         isVerifying = true;
         verifyBtn.disabled = true;
-        statusMessage.textContent = "🔍 Verifying face...";
+        updateStatus("Verifying face...");
 
         try {
-            // ============================================================
-            // Capture the face with descriptor
-            // ============================================================
-            const detection = await faceapi
+            const fullDetection = await faceapi
                 .detectSingleFace(
                     video,
                     new faceapi.TinyFaceDetectorOptions({
                         inputSize: 512,
-                        scoreThreshold: 0.3
+                        scoreThreshold: 0.5
                     })
                 )
                 .withFaceLandmarks()
                 .withFaceDescriptor();
 
-            if (!detection) {
-                statusMessage.textContent = "❌ No face detected. Please try again.";
+            if (!fullDetection) {
+                updateStatus("Face capture failed.");
                 verifyBtn.disabled = false;
                 isVerifying = false;
                 return;
             }
 
-            // Check face size again
-            const box = detection.box;
-            if (box.width < 80 || box.height < 80) {
-                statusMessage.textContent = "❌ Face too small. Move closer to the camera.";
-                verifyBtn.disabled = false;
-                isVerifying = false;
-                return;
-            }
+            const liveDescriptor = Array.from(fullDetection.descriptor);
 
-            // ============================================================
-            // Send to server for verification
-            // ============================================================
             const response = await fetch("face_verify.php", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
-                    descriptor: Array.from(detection.descriptor)
+                    descriptor: liveDescriptor
                 })
             });
 
             const result = await response.json();
 
             if (result.success) {
-                statusMessage.textContent = "✅ Face verified successfully! Redirecting...";
-                const redirectUrl = result.redirect || "../renter/browse.php";
+                updateStatus("Face verified! Redirecting...");
                 setTimeout(() => {
-                    window.location.href = redirectUrl;
+                    window.location.href = result.redirect || "../renter/browse.php";
                 }, 1200);
             } else {
-                statusMessage.textContent = "❌ " + (result.message || "Face does not match the registered profile.");
+                updateStatus("Face does not match.");
                 verifyBtn.disabled = false;
                 isVerifying = false;
             }
 
         } catch (error) {
             console.error("Verification error:", error);
-            statusMessage.textContent = "❌ Verification error. Please try again.";
+            updateStatus("Verification error.");
             verifyBtn.disabled = false;
             isVerifying = false;
         }
-    });
+    }
 
-    // ============================================================
-    // STEP 10: CLEANUP ON PAGE UNLOAD
-    // ============================================================
-    window.addEventListener("beforeunload", () => {
-        if (detectionInterval) {
-            clearInterval(detectionInterval);
-            detectionInterval = null;
-        }
-        // Stop camera tracks
-        if (video.srcObject) {
-            const tracks = video.srcObject.getTracks();
-            tracks.forEach(track => track.stop());
-        }
-    });
+    verifyBtn.addEventListener('click', verifyFace);
+
+    await startCamera();
+    setTimeout(loadModels, 500);
 
 })();

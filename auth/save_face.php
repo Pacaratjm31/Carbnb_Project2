@@ -28,7 +28,10 @@ if ($userId <= 0 || empty($faceImage) || empty($faceEncoding)) {
 
 // Verify session matches user ID
 if (!isset($_SESSION['face_registration_user_id']) || (int) $_SESSION['face_registration_user_id'] !== $userId) {
-    die("Session mismatch. Please register again.");
+    // Also check if user is logged in directly
+    if (!isset($_SESSION['user_id']) || (int) $_SESSION['user_id'] !== $userId) {
+        die("Session mismatch. Please register again.");
+    }
 }
 
 // ============================================
@@ -40,8 +43,9 @@ if (!is_array($descriptor) || count($descriptor) < 2) {
 }
 
 // ============================================
-// SAVE FACE IMAGE
+// SAVE FACE IMAGE - FIXED PATH
 // ============================================
+// IMPORTANT: Using "face_auth" as shown in your folder structure
 $uploadDir = "../uploads/face_auth/";
 if (!is_dir($uploadDir)) {
     mkdir($uploadDir, 0777, true);
@@ -56,6 +60,7 @@ if ($imageData === false) {
     die("Failed to decode image.");
 }
 
+// Generate unique filename
 $fileName = 'face_' . $userId . '_' . time() . '.png';
 $filePath = $uploadDir . $fileName;
 
@@ -64,8 +69,11 @@ if (!file_put_contents($filePath, $imageData)) {
 }
 
 // ============================================
-// UPDATE DATABASE
+// UPDATE DATABASE - FIXED PATH
 // ============================================
+// IMPORTANT: Store path relative to root (without leading slash)
+// This matches the path structure in your database:
+// "uploads/face_auth/filename.png"
 $dbFacePath = "uploads/face_auth/" . $fileName;
 $descriptorJson = json_encode($descriptor);
 
@@ -80,12 +88,30 @@ try {
     ");
     $stmt->execute([$dbFacePath, $descriptorJson, $userId]);
 
+    // Verify the update was successful
+    $checkStmt = $pdo->prepare("SELECT face_image FROM users WHERE id = ?");
+    $checkStmt->execute([$userId]);
+    $result = $checkStmt->fetch();
+    
+    if (!$result || empty($result['face_image'])) {
+        // If update failed, clean up file
+        if (file_exists($filePath)) {
+            unlink($filePath);
+        }
+        die("Failed to update database with face data.");
+    }
+
     // ============================================
     // CLEANUP SESSION
     // ============================================
     unset($_SESSION['face_registration_user_id']);
     unset($_SESSION['registration_success']);
     unset($_SESSION['face_form_token']);
+
+    // ============================================
+    // SET SUCCESS MESSAGE
+    // ============================================
+    $_SESSION['registration_success'] = "Face registered successfully! Please login again.";
 
     // ============================================
     // REDIRECT TO LOGIN
@@ -98,6 +124,10 @@ try {
     if (file_exists($filePath)) {
         unlink($filePath);
     }
-    die("Database error: " . $e->getMessage());
+    
+    // Log error (but don't expose to user)
+    error_log("Face registration database error: " . $e->getMessage());
+    
+    die("Database error occurred. Please try again.");
 }
 ?>
