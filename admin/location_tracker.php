@@ -1,8 +1,15 @@
 <?php
 // ============================================================
-// Admin Authentication & Database Connection
+// DATABASE CONNECTION
 // ============================================================
-require_once __DIR__ . '/admin_auth.php';
+
+// Start session for all requests
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Load database connection
+require_once __DIR__ . '/../database/db.php';
 
 // Get database connection
 $pdo = $GLOBALS['pdo'] ?? null;
@@ -22,14 +29,16 @@ if (!$pdo) {
 }
 
 // ============================================================
-// API ROUTER
+// REQUEST TYPE DETECTION
 // ============================================================
+$isPost = ($_SERVER['REQUEST_METHOD'] === 'POST');
 $ajax = isset($_GET['ajax']) && $_GET['ajax'] === '1';
+$action = isset($_POST['action']) ? $_POST['action'] : '';
 
 // ============================================================
-// POST: Renter sends REAL GPS location
+// RENTER GPS POST - NO ADMIN AUTH REQUIRED
 // ============================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$ajax) {
+if ($isPost && $action !== 'mark_read' && !$ajax) {
     header('Content-Type: application/json');
     
     // Check if user is logged in
@@ -45,7 +54,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$ajax) {
     $latitude = isset($_POST['latitude']) ? (float) $_POST['latitude'] : null;
     $longitude = isset($_POST['longitude']) ? (float) $_POST['longitude'] : null;
     $accuracy = isset($_POST['accuracy']) ? (float) $_POST['accuracy'] : 0;
-    $recorded_at = isset($_POST['recorded_at']) ? $_POST['recorded_at'] : date('Y-m-d H:i:s');
+    $booking_id = isset($_POST['booking_id']) ? (int) $_POST['booking_id'] : null;
+    
+    // Use server time instead of browser timestamp
+    $recorded_at = date('Y-m-d H:i:s');
     
     // Validate coordinates
     if ($latitude === null || $longitude === null) {
@@ -88,7 +100,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$ajax) {
             exit;
         }
         
-        // Check if user already has a location in last 30 minutes
+        // Insert the GPS location with booking_id support
+        if ($booking_id !== null) {
+            $stmt = $pdo->prepare("
+                INSERT INTO location_tracker (user_id, booking_id, latitude, longitude, accuracy, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([$user_id, $booking_id, $latitude, $longitude, $accuracy, $recorded_at]);
+        } else {
+            $stmt = $pdo->prepare("
+                INSERT INTO location_tracker (user_id, latitude, longitude, accuracy, recorded_at)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([$user_id, $latitude, $longitude, $accuracy, $recorded_at]);
+        }
+        
+        $insertId = $pdo->lastInsertId();
+        
+        // Log successful save
+        error_log("GPS Location saved: ID=$insertId, User=$user_id, Booking=$booking_id, Lat=$latitude, Lng=$longitude, Time=$recorded_at");
+        
+        // Check if this is the first location for this user in the last 30 minutes
         $stmt = $pdo->prepare("
             SELECT COUNT(*) 
             FROM location_tracker 
@@ -97,18 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$ajax) {
         $stmt->execute([$user_id]);
         $existingLocations = (int) $stmt->fetchColumn();
         
-        $isFirstLocation = ($existingLocations === 0);
-        
-        // Insert the GPS location
-        $stmt = $pdo->prepare("
-            INSERT INTO location_tracker (user_id, latitude, longitude, accuracy, recorded_at)
-            VALUES (?, ?, ?, ?, ?)
-        ");
-        $stmt->execute([$user_id, $latitude, $longitude, $accuracy, $recorded_at]);
-        $insertId = $pdo->lastInsertId();
-        
-        // Log successful save
-        error_log("GPS Location saved: ID=$insertId, User=$user_id, Lat=$latitude, Lng=$longitude");
+        $isFirstLocation = ($existingLocations <= 1);
         
         // Create notification only on first location
         if ($isFirstLocation && $insertId > 0) {
@@ -132,24 +153,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$ajax) {
                     $message = "Renter {$userName} has allowed location access and their current location is now available.";
                     $stmt = $pdo->prepare("
                         INSERT INTO admin_notifications 
-                        (notification_type, title, message, user_id, is_read, created_at)
-                        VALUES ('location_permission_granted', '📍 Location Permission Granted', ?, ?, 0, NOW())
+                        (notification_type, title, message, user_id, booking_id, is_read, created_at)
+                        VALUES ('location_permission_granted', '📍 Location Permission Granted', ?, ?, ?, 0, NOW())
                     ");
-                    $stmt->execute([$message, $user_id]);
+                    $stmt->execute([$message, $user_id, $booking_id]);
                     error_log("Notification created for user: $user_id");
                 }
             }
         }
-        
-        // Clean up old records (older than 1 hour)
-        $stmt = $pdo->prepare("DELETE FROM location_tracker WHERE recorded_at < DATE_SUB(NOW(), INTERVAL 1 HOUR)");
-        $stmt->execute();
         
         echo json_encode([
             'success' => true,
             'message' => 'GPS location saved successfully!',
             'user_id' => $user_id,
             'user_name' => $user['full_name'],
+            'booking_id' => $booking_id,
             'is_first' => $isFirstLocation,
             'latitude' => $latitude,
             'longitude' => $longitude,
@@ -174,6 +192,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$ajax) {
 }
 
 // ============================================================
+// ADMIN REQUESTS - LOAD ADMIN AUTH
+// ============================================================
+require_once __DIR__ . '/admin_auth.php';
+
+// ============================================================
+// POST: Mark notification as read (Admin)
+// ============================================================
+if ($isPost && $action === 'mark_read') {
+    header('Content-Type: application/json');
+    try {
+        $id = isset($_POST['notification_id']) ? (int) $_POST['notification_id'] : 0;
+        if ($id > 0) {
+            $stmt = $pdo->prepare("UPDATE admin_notifications SET is_read = 1 WHERE id = ?");
+            $stmt->execute([$id]);
+        }
+        echo json_encode(['success' => true]);
+    } catch (Exception $e) {
+        error_log('location_tracker.php mark_read error: ' . $e->getMessage());
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// ============================================================
 // GET: Admin fetches locations for map
 // ============================================================
 if ($ajax && ($_GET['section'] ?? '') === 'locations') {
@@ -191,11 +233,12 @@ if ($ajax && ($_GET['section'] ?? '') === 'locations') {
             exit;
         }
         
-        // Get locations from last 30 minutes
+        // Get locations from last 30 minutes with booking_id
         $stmt = $pdo->prepare("
             SELECT 
                 lt.id,
                 lt.user_id,
+                lt.booking_id,
                 lt.latitude,
                 lt.longitude,
                 lt.accuracy,
@@ -245,6 +288,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'debug') {
                 SELECT 
                     lt.id,
                     lt.user_id,
+                    lt.booking_id,
                     lt.latitude,
                     lt.longitude,
                     lt.accuracy,
@@ -321,25 +365,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     } catch (Exception $e) {
         error_log('location_tracker.php notifications error: ' . $e->getMessage());
         echo json_encode(['success' => false, 'notifications' => []]);
-    }
-    exit;
-}
-
-// ============================================================
-// POST: Mark notification as read
-// ============================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'mark_read') {
-    header('Content-Type: application/json');
-    try {
-        $id = isset($_POST['notification_id']) ? (int) $_POST['notification_id'] : 0;
-        if ($id > 0) {
-            $stmt = $pdo->prepare("UPDATE admin_notifications SET is_read = 1 WHERE id = ?");
-            $stmt->execute([$id]);
-        }
-        echo json_encode(['success' => true]);
-    } catch (Exception $e) {
-        error_log('location_tracker.php mark_read error: ' . $e->getMessage());
-        echo json_encode(['success' => false]);
     }
     exit;
 }

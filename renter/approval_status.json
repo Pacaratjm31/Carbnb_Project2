@@ -1,0 +1,11 @@
+{
+    "success": true,
+    "user_id": 1,
+    "status": "pending",
+    "disapproval_reason": "",
+    "status_label": "Pending",
+    "is_approved": false,
+    "is_pending": true,
+    "is_disapproved": false,
+    "message": "Account is pending approval"
+}

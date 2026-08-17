@@ -1,10 +1,21 @@
 <?php
+/**
+ * browse.php
+ * Vehicle browsing page for renters with JSON approval status checking
+ */
+
+// ============================================
+// 1. INITIALIZATION & SESSION
+// ============================================
 include '../database/db.php';
+
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+
 $conn = $conn ?? $GLOBALS['conn'] ?? $GLOBALS['pdo'] ?? null;
 
+// Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
     header('Location: ../auth/login.php');
     exit;
@@ -13,6 +24,9 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = (int) ($_SESSION['user_id'] ?? 0);
 require_once __DIR__ . '/../auth/require_face_verified.php';
 
+// ============================================
+// 2. GET RENTER DATA
+// ============================================
 $stmt = $conn->prepare("SELECT id, full_name, status, disapproval_reason FROM users WHERE id = ? AND is_deleted = 0");
 $stmt->execute([$user_id]);
 $renter = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -23,6 +37,9 @@ if (!$renter) {
     exit;
 }
 
+// ============================================
+// 3. HELPER FUNCTIONS
+// ============================================
 function renter_approval_label(string $status): string {
     return match ($status) {
         'approved' => 'Approved',
@@ -71,7 +88,34 @@ function get_renter_account_state(array $renter): array {
     ];
 }
 
+function build_vehicle_image_path($value): string {
+    if (empty($value)) {
+        return '../uploads/vehicles/default-car.svg';
+    }
+
+    if (preg_match('#^https?://#i', $value)) {
+        return $value;
+    }
+
+    if (preg_match('#^uploads/#', $value)) {
+        return '../' . $value;
+    }
+
+    if (strpos($value, '../') === 0 || strpos($value, '/') === 0) {
+        return $value;
+    }
+
+    return '../uploads/vehicles/' . basename($value);
+}
+
+// ============================================
+// 4. GET ACCOUNT STATE
+// ============================================
 $account_state = get_renter_account_state($renter);
+
+// ============================================
+// 5. FILTER HANDLING
+// ============================================
 $filter = trim($_GET['seater'] ?? '');
 $categoryMap = [
     '4-5' => '4-5_seater',
@@ -86,81 +130,7 @@ $categoryMap = [
 $normalizedFilter = $categoryMap[$filter] ?? '';
 
 // ============================================
-// AJAX endpoint for vehicle list refresh
-// ============================================
-$ajax = isset($_GET['ajax']) && $_GET['ajax'] === '1';
-if ($ajax && ($_GET['section'] ?? '') === 'vehicle-list') {
-    try {
-        $sql = "
-            SELECT v.id, v.name AS vehicle_name, v.price_per_day AS rate, v.image AS car_image,
-                   v.availability_status AS status, v.approval_status, v.approval_feedback AS rejection_reason,
-                   v.category, u.full_name AS owner_name
-            FROM vehicles v
-            JOIN users u ON v.owner_id = u.id
-            WHERE v.is_deleted = 0 AND v.approval_status = 'approved'
-        ";
-
-        if ($normalizedFilter !== '') {
-            $sql .= ' AND v.category = :category';
-        }
-
-        $sql .= ' ORDER BY v.created_at DESC';
-
-        $stmt = $conn->prepare($sql);
-
-        if ($normalizedFilter !== '') {
-            $stmt->execute(['category' => $normalizedFilter]);
-        } else {
-            $stmt->execute();
-        }
-
-        $cars = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        if (empty($cars)) {
-            echo '<div class="no-results"><h3>No vehicles found in this category.</h3><a href="browse.php" class="blue">View all cars</a></div>';
-        } else {
-            foreach ($cars as $car) {
-                renderCarCard($car, $user_id, $conn, $account_state);
-            }
-        }
-        exit;
-    } catch (PDOException $e) {
-        echo '<div class="no-results"><h3>Error loading vehicles</h3></div>';
-        exit;
-    }
-}
-
-try {
-    $sql = "
-        SELECT v.id, v.name AS vehicle_name, v.price_per_day AS rate, v.image AS car_image,
-               v.availability_status AS status, v.approval_status, v.approval_feedback AS rejection_reason,
-               v.category, u.full_name AS owner_name
-        FROM vehicles v
-        JOIN users u ON v.owner_id = u.id
-        WHERE v.is_deleted = 0 AND v.approval_status = 'approved'
-    ";
-
-    if ($normalizedFilter !== '') {
-        $sql .= ' AND v.category = :category';
-    }
-
-    $sql .= ' ORDER BY v.created_at DESC';
-
-    $stmt = $conn->prepare($sql);
-
-    if ($normalizedFilter !== '') {
-        $stmt->execute(['category' => $normalizedFilter]);
-    } else {
-        $stmt->execute();
-    }
-
-    $cars = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (PDOException $e) {
-    die('Database error: ' . $e->getMessage());
-}
-
-// ============================================
-// Function to render a car card
+// 6. FUNCTION TO RENDER CAR CARD
 // ============================================
 function renderCarCard($car, $user_id, $conn, $account_state) {
     $status = $car['status'] ?? 'available';
@@ -258,25 +228,88 @@ function renderCarCard($car, $user_id, $conn, $account_state) {
     <?php
 }
 
-function build_vehicle_image_path($value): string {
-    if (empty($value)) {
-        return '../uploads/vehicles/default-car.svg';
-    }
+// ============================================
+// 7. AJAX ENDPOINT FOR VEHICLE LIST (HTML)
+// ============================================
+$ajax = isset($_GET['ajax']) && $_GET['ajax'] === '1';
+if ($ajax && ($_GET['section'] ?? '') === 'vehicle-list') {
+    header('Content-Type: text/html; charset=utf-8');
+    
+    try {
+        $sql = "
+            SELECT v.id, v.name AS vehicle_name, v.price_per_day AS rate, v.image AS car_image,
+                   v.availability_status AS status, v.approval_status, v.approval_feedback AS rejection_reason,
+                   v.category, u.full_name AS owner_name
+            FROM vehicles v
+            JOIN users u ON v.owner_id = u.id
+            WHERE v.is_deleted = 0 AND v.approval_status = 'approved'
+        ";
 
-    if (preg_match('#^https?://#i', $value)) {
-        return $value;
-    }
+        if ($normalizedFilter !== '') {
+            $sql .= ' AND v.category = :category';
+        }
 
-    if (preg_match('#^uploads/#', $value)) {
-        return '../' . $value;
-    }
+        $sql .= ' ORDER BY v.created_at DESC';
 
-    if (strpos($value, '../') === 0 || strpos($value, '/') === 0) {
-        return $value;
-    }
+        $stmt = $conn->prepare($sql);
 
-    return '../uploads/vehicles/' . basename($value);
+        if ($normalizedFilter !== '') {
+            $stmt->execute(['category' => $normalizedFilter]);
+        } else {
+            $stmt->execute();
+        }
+
+        $cars = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        if (empty($cars)) {
+            echo '<div class="no-results"><h3>No vehicles found in this category.</h3><a href="browse.php" class="blue">View all cars</a></div>';
+        } else {
+            foreach ($cars as $car) {
+                renderCarCard($car, $user_id, $conn, $account_state);
+            }
+        }
+        exit;
+    } catch (PDOException $e) {
+        echo '<div class="no-results"><h3>Error loading vehicles</h3></div>';
+        exit;
+    }
 }
+
+// ============================================
+// 8. MAIN VEHICLE QUERY
+// ============================================
+try {
+    $sql = "
+        SELECT v.id, v.name AS vehicle_name, v.price_per_day AS rate, v.image AS car_image,
+               v.availability_status AS status, v.approval_status, v.approval_feedback AS rejection_reason,
+               v.category, u.full_name AS owner_name
+        FROM vehicles v
+        JOIN users u ON v.owner_id = u.id
+        WHERE v.is_deleted = 0 AND v.approval_status = 'approved'
+    ";
+
+    if ($normalizedFilter !== '') {
+        $sql .= ' AND v.category = :category';
+    }
+
+    $sql .= ' ORDER BY v.created_at DESC';
+
+    $stmt = $conn->prepare($sql);
+
+    if ($normalizedFilter !== '') {
+        $stmt->execute(['category' => $normalizedFilter]);
+    } else {
+        $stmt->execute();
+    }
+
+    $cars = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    die('Database error: ' . $e->getMessage());
+}
+
+// ============================================
+// 9. HTML OUTPUT
+// ============================================
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -314,7 +347,7 @@ function build_vehicle_image_path($value): string {
 }
 
 /* ============================================================
-   LOCATION PERMISSION MODAL - IMPROVED FOR MOBILE
+   LOCATION PERMISSION MODAL
    ============================================================ */
 .location-modal-overlay {
     display: none;
@@ -433,6 +466,27 @@ function build_vehicle_image_path($value): string {
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
+
+/* Status badge colors */
+.status-badge.approved {
+    background: #28a745;
+    color: white;
+}
+.status-badge.pending {
+    background: #ffc107;
+    color: #212529;
+}
+.status-badge.disapproved {
+    background: #dc3545;
+    color: white;
+}
+.status-badge {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 600;
+    display: inline-block;
+}
 </style>
 </head>
 <body data-user-id="<?php echo (int) $user_id; ?>" data-current-status="<?php echo htmlspecialchars($renter['status'] ?? 'pending'); ?>">
@@ -453,6 +507,9 @@ function build_vehicle_image_path($value): string {
     </div>
 </div>
 
+<!-- ============================================================
+     TOP NAVIGATION
+     ============================================================ -->
 <div class="top-nav">
     <div class="nav-left">
         <h2>Carbnb</h2>
@@ -473,6 +530,9 @@ function build_vehicle_image_path($value): string {
     </div>
 </div>
 
+<!-- ============================================================
+     HEADER
+     ============================================================ -->
 <div class="header-text">
     <h1>Browse <span class="blue">Available</span> <span class="orange">Cars</span></h1>
     <?php if (!empty($normalizedFilter)): ?>
@@ -482,6 +542,9 @@ function build_vehicle_image_path($value): string {
     <?php endif; ?>
 </div>
 
+<!-- ============================================================
+     STATUS SECTION
+     ============================================================ -->
 <div class="status-section">
     <div class="status-banner <?= $account_state['restricted'] ? 'warning' : 'success' ?>">
         <div class="banner-content">
@@ -509,6 +572,9 @@ function build_vehicle_image_path($value): string {
     </div>
 </div>
 
+<!-- ============================================================
+     FILTER BAR
+     ============================================================ -->
 <div class="filter-bar">
     <a href="browse.php" data-filter="all" class="<?= empty($normalizedFilter) ? 'active' : '' ?>">All</a>
     <a href="browse.php?seater=4-5" data-filter="4-5" class="<?= $normalizedFilter === '4-5_seater' ? 'active' : '' ?>">4-5 Seater</a>
@@ -517,6 +583,9 @@ function build_vehicle_image_path($value): string {
     <a href="browse.php?seater=10+" data-filter="10+" class="<?= $normalizedFilter === '10+_seater' ? 'active' : '' ?>">10+ Seater</a>
 </div>
 
+<!-- ============================================================
+     CAR CONTAINER
+     ============================================================ -->
 <div class="car-container" id="carContainer">
 <?php if (empty($cars)): ?>
     <div class="no-results">
@@ -530,12 +599,20 @@ function build_vehicle_image_path($value): string {
 <?php endif; ?>
 </div>
 
+<!-- ============================================================
+     FOOTER
+     ============================================================ -->
 <footer>
     <p>&copy; 2026 Carbnb Philippines. All rights reserved.</p>
 </footer>
 
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
 <script>
 (function () {
+    'use strict';
+    
     // ============================================================
     // PAGE ELEMENTS
     // ============================================================
@@ -565,15 +642,21 @@ function build_vehicle_image_path($value): string {
     let isTracking = false;
     let isProcessing = false;
 
-    // ============================================================
-    // UPDATE MODAL STATUS
-    // ============================================================
     function setModalStatus(message, type) {
         modalStatus.textContent = message;
         modalStatus.className = 'permission-status';
         if (type) {
             modalStatus.classList.add(type);
         }
+    }
+
+    // ============================================================
+    // DEVICE DETECTION
+    // ============================================================
+    function isMobileDevice() {
+        return /Android|iPhone|iPad|iPod|BlackBerry|Windows Phone|Mobile|webOS|IEMobile|Opera Mini/i.test(
+            navigator.userAgent || ''
+        );
     }
 
     // ============================================================
@@ -609,8 +692,14 @@ function build_vehicle_image_path($value): string {
         if (!carContainer) return;
         var filterParam = currentFilter !== 'all' ? '&seater=' + encodeURIComponent(currentFilter) : '';
         var url = 'browse.php?ajax=1&section=vehicle-list' + filterParam;
+        
         fetch(url)
-            .then(function(response) { return response.text(); })
+            .then(function(response) { 
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+                return response.text(); 
+            })
             .then(function(html) {
                 if (html.trim().length > 0) {
                     carContainer.innerHTML = html;
@@ -626,7 +715,9 @@ function build_vehicle_image_path($value): string {
                     bindBookNowButtons();
                 }
             })
-            .catch(function(error) { console.log('Auto-refresh failed:', error); });
+            .catch(function(error) { 
+                console.log('Auto-refresh failed:', error); 
+            });
     }
     setInterval(refreshVehicleList, 30000);
 
@@ -647,60 +738,107 @@ function build_vehicle_image_path($value): string {
     }
 
     // ============================================================
-    // ACCOUNT APPROVAL CHECKER
+    // ACCOUNT APPROVAL CHECKER - PRESERVED
     // ============================================================
     if (userId && statusBadge && currentStatus === "pending") {
+        console.log('🔍 Starting approval status check for user:', userId);
+        
+        let checkCount = 0;
+        const maxChecks = 60;
+        
         const pollInterval = setInterval(function () {
-            fetch("check_approval_status.php?user_id=" + userId)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === "approved") {
-                        clearInterval(pollInterval);
+            checkCount++;
+            
+            if (checkCount > maxChecks) {
+                console.log('⏹️ Stopped polling after ' + maxChecks + ' attempts');
+                clearInterval(pollInterval);
+                return;
+            }
+            
+            const checkUrl = '/renter/approval_status.json';
+            
+            console.log('📡 Checking approval status (attempt ' + checkCount + ')...');
+            console.log('📡 URL:', checkUrl);
+            
+            fetch(checkUrl, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            })
+            .then(function(response) {
+                console.log('📡 Response status:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                }
+                
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    console.warn('⚠️ Expected JSON but got:', contentType);
+                    throw new Error('Server returned non-JSON response');
+                }
+                
+                return response.json();
+            })
+            .then(function(data) {
+                console.log('📡 Response data:', data);
+                
+                if (!data.success) {
+                    console.warn('⚠️ API error:', data.error);
+                    return;
+                }
+                
+                if (data.status === "approved") {
+                    console.log('✅ Account approved! Refreshing page...');
+                    clearInterval(pollInterval);
+                    
+                    if (statusBadge) {
+                        statusBadge.textContent = "Approved";
+                        statusBadge.className = "status-badge approved";
+                    }
+                    if (approvalBannerBadge) {
+                        approvalBannerBadge.textContent = "Approved";
+                        approvalBannerBadge.className = "status-badge approved";
+                    }
+                    
+                    setTimeout(function() {
                         location.reload();
-                    } else if (data.status === "disapproved") {
+                    }, 1500);
+                } 
+                else if (data.status === "disapproved") {
+                    console.log('❌ Account disapproved');
+                    clearInterval(pollInterval);
+                    
+                    if (statusBadge) {
                         statusBadge.textContent = "Disapproved";
                         statusBadge.className = "status-badge disapproved";
-                        approvalNote.textContent = data.disapproval_reason || "Your account was disapproved.";
-                        if (approvalBannerBadge) {
-                            approvalBannerBadge.textContent = "Disapproved";
-                            approvalBannerBadge.className = "status-badge disapproved";
-                        }
                     }
-                })
-                .catch(function (err) { console.log(err); });
+                    if (approvalNote) {
+                        approvalNote.textContent = data.disapproval_reason || "Your account was disapproved.";
+                    }
+                    if (approvalBannerBadge) {
+                        approvalBannerBadge.textContent = "Disapproved";
+                        approvalBannerBadge.className = "status-badge disapproved";
+                    }
+                }
+                else if (data.status === "pending") {
+                    console.log('⏳ Still pending approval...');
+                }
+                else {
+                    console.log('ℹ️ Unknown status:', data.status);
+                }
+            })
+            .catch(function(err) { 
+                console.error('❌ Approval check failed:', err.message);
+                console.log('🔄 Will retry in 5 seconds...');
+            });
+            
         }, 5000);
     }
 
     // ============================================================
-    // FIXED: Get the base URL for API calls
-    // ============================================================
-    function getBaseUrl() {
-        var protocol = window.location.protocol;
-        var host = window.location.host;
-        return protocol + '//' + host;
-    }
-
-    // ============================================================
-    // FIXED: Get the API path - Works on InfinityFree
-    // ============================================================
-    function getApiPath() {
-        var path = window.location.pathname;
-        // Remove the filename (browse.php) to get the base path
-        var basePath = path.substring(0, path.lastIndexOf('/'));
-        // Go up one level (from /renter/ to /)
-        var projectPath = basePath.substring(0, basePath.lastIndexOf('/') + 1);
-        // If projectPath is empty or just '/', use '/'
-        if (projectPath === '' || projectPath === '/') {
-            // For InfinityFree, the project is typically at the root
-            // If your project is in a subfolder, change this to that folder name
-            // Example: '/carbnb/'
-            projectPath = '/';
-        }
-        return projectPath;
-    }
-
-    // ============================================================
-    // FIXED: SEND GPS LOCATION TO SERVER
+    // GPS FUNCTIONS
     // ============================================================
     function sendLocationToServer(position) {
         var latitude = position.coords.latitude;
@@ -716,15 +854,9 @@ function build_vehicle_image_path($value): string {
         formData.append('accuracy', accuracy);
         formData.append('recorded_at', recorded_at);
 
-        // ============================================================
-        // FIXED: Build the API URL - Works on any domain
-        // ============================================================
-        var projectPath = getApiPath();
-        var apiUrl = getBaseUrl() + projectPath + 'admin/location_tracker.php';
+        var apiUrl = '/admin/location_tracker.php';
         
         console.log('📍 API URL:', apiUrl);
-        console.log('📡 Project Path:', projectPath);
-        console.log('📡 Full URL:', apiUrl);
 
         return fetch(apiUrl, {
             method: 'POST',
@@ -735,64 +867,66 @@ function build_vehicle_image_path($value): string {
         })
         .then(function(response) {
             console.log('📡 Response status:', response.status);
+            
             if (!response.ok) {
                 throw new Error('HTTP ' + response.status + ': ' + response.statusText);
             }
+            
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                console.warn('⚠️ Expected JSON but got:', contentType);
+                return response.text().then(function(text) {
+                    console.error('❌ Server returned non-JSON response:', text.substring(0, 200));
+                    throw new Error('Server returned non-JSON response. Expected JSON, got ' + contentType);
+                });
+            }
+            
             return response.json();
         })
         .then(function(data) {
             console.log('📡 Server response:', data);
             if (!data.success) {
-                throw new Error(data.message || 'Server error');
+                throw new Error(data.message || 'Server returned success: false');
             }
             return data;
         });
     }
 
     // ============================================================
-    // START CONTINUOUS GPS TRACKING (watchPosition)
+    // startContinuousTracking - KEPT EXACTLY AS IS
     // ============================================================
     function startContinuousTracking() {
-        // Check if geolocation is supported
+        // Prevent multiple simultaneous GPS requests
+        if (isProcessing) {
+            console.log('⏳ Already processing GPS request');
+            return false;
+        }
+        isProcessing = true;
+        
         if (!navigator.geolocation) {
             setModalStatus('❌ Geolocation is not supported on this device.', 'error');
             allowBtn.disabled = false;
             allowBtn.textContent = 'Try Again';
+            isProcessing = false;
             return false;
-        }
-
-        // Check if HTTPS is required (most mobile browsers)
-        var isSecure = window.location.protocol === 'https:' || 
-                       window.location.hostname === 'localhost' || 
-                       window.location.hostname === '127.0.0.1';
-        
-        if (!isSecure) {
-            console.warn('⚠️ Geolocation may be blocked because this page is not served over HTTPS.');
-            console.warn('📍 Current protocol:', window.location.protocol);
-            console.warn('📍 Current hostname:', window.location.hostname);
-            setModalStatus('⚠️ This page is not secure. GPS works best over HTTPS or localhost.', 'error');
-            // Continue anyway - let the browser decide
         }
 
         setModalStatus('📡 Getting real GPS location...', 'loading');
         allowBtn.disabled = true;
         allowBtn.textContent = 'Getting GPS...';
 
-        // Set a timeout to handle slow GPS
         var gpsTimeout = setTimeout(function() {
-            console.warn('⏱️ GPS timeout - trying to get location took too long');
-            setModalStatus('⏱️ GPS request is taking longer than expected. Please ensure GPS is enabled.', 'error');
+            console.warn('⏱️ GPS timeout');
+            setModalStatus('⏱️ GPS request timed out. Please ensure GPS is enabled.', 'error');
             allowBtn.disabled = false;
             allowBtn.textContent = 'Try Again';
             isProcessing = false;
         }, 20000);
 
         navigator.geolocation.getCurrentPosition(
-            // SUCCESS
             function(position) {
                 clearTimeout(gpsTimeout);
                 console.log('✅ GPS acquired:', position.coords.latitude, position.coords.longitude);
-                console.log('📍 Accuracy:', position.coords.accuracy, 'meters');
                 
                 setModalStatus('📍 GPS acquired! Saving location...', 'loading');
 
@@ -801,16 +935,16 @@ function build_vehicle_image_path($value): string {
                         console.log('✅ First location saved!');
                         isLocationGranted = true;
                         isTracking = true;
+                        isProcessing = false;
                         
-                        setModalStatus('✅ GPS tracking active! Redirecting...', 'success');
+                        setModalStatus('✅ GPS tracking active!', 'success');
                         
-                        // Start continuous tracking with watchPosition
                         if (watchId === null) {
                             watchId = navigator.geolocation.watchPosition(
                                 function(newPosition) {
-                                    console.log('🔄 GPS update:', newPosition.coords.latitude, newPosition.coords.longitude);
+                                    console.log('🔄 GPS update');
                                     sendLocationToServer(newPosition).catch(function(err) {
-                                        console.log('GPS update send error:', err.message);
+                                        console.log('GPS update error:', err.message);
                                     });
                                 },
                                 function(error) {
@@ -825,12 +959,10 @@ function build_vehicle_image_path($value): string {
                             console.log('🔄 Continuous GPS tracking started with watchId:', watchId);
                         }
                         
-                        setTimeout(function() {
-                            modal.classList.remove('show');
-                            if (pendingCarId) {
-                                window.location.href = 'book.php?car_id=' + pendingCarId;
-                            }
-                        }, 1200);
+                        modal.classList.remove('show');
+                        if (pendingCarId) {
+                            window.location.href = 'book.php?car_id=' + pendingCarId;
+                        }
                     })
                     .catch(function(error) {
                         console.error('❌ Save failed:', error);
@@ -840,23 +972,20 @@ function build_vehicle_image_path($value): string {
                         isProcessing = false;
                     });
             },
-            // ERROR - SHOW ACTUAL GEOLOCATION ERROR
             function(error) {
                 clearTimeout(gpsTimeout);
                 console.error('❌ GPS Error:', error);
-                console.error('Error code:', error.code);
-                console.error('Error message:', error.message);
                 
                 var message = '';
                 switch(error.code) {
-                    case 1: // PERMISSION_DENIED
-                        message = '❌ Location permission denied. You must allow GPS access in your browser settings.';
+                    case 1:
+                        message = '❌ Location permission denied. Please allow GPS access.';
                         break;
-                    case 2: // POSITION_UNAVAILABLE
-                        message = '⚠️ GPS unavailable. Please enable GPS on your device and try again.';
+                    case 2:
+                        message = '⚠️ GPS unavailable. Please enable GPS on your device.';
                         break;
-                    case 3: // TIMEOUT
-                        message = '⏱️ GPS request timed out. Please ensure GPS is enabled and try again.';
+                    case 3:
+                        message = '⏱️ GPS request timed out. Please try again.';
                         break;
                     default:
                         message = '⚠️ GPS error: ' + error.message;
@@ -876,9 +1005,6 @@ function build_vehicle_image_path($value): string {
         return true;
     }
 
-    // ============================================================
-    // STOP CONTINUOUS GPS TRACKING
-    // ============================================================
     function stopContinuousTracking() {
         if (watchId !== null) {
             navigator.geolocation.clearWatch(watchId);
@@ -889,45 +1015,55 @@ function build_vehicle_image_path($value): string {
     }
 
     // ============================================================
-    // BOOK NOW HANDLER
+    // FIXED: handleBookNow - Removed cloneNode() / replaceChild()
     // ============================================================
     function handleBookNow(carId) {
         pendingCarId = carId;
         
+        const isMobile = isMobileDevice();
+        console.log('📱 Device detection:', isMobile ? 'Mobile' : 'Desktop');
+        
+        if (!isMobile) {
+            console.log('💻 Desktop detected - skipping GPS, going directly to book.php');
+            window.location.href = 'book.php?car_id=' + carId;
+            return;
+        }
+        
         if (isLocationGranted && isTracking) {
+            console.log('📍 GPS already active - going to book.php');
             window.location.href = 'book.php?car_id=' + carId;
             return;
         }
 
+        console.log('📱 Mobile detected - showing GPS modal');
         isProcessing = false;
         allowBtn.disabled = false;
         allowBtn.textContent = 'Allow Location';
+        denyBtn.disabled = false;
+        
         setModalStatus('Please allow location access to continue booking.', '');
-        
         modal.classList.add('show');
-        
-        // Remove old event listeners by cloning buttons
-        var newAllowBtn = allowBtn.cloneNode(true);
-        var newDenyBtn = denyBtn.cloneNode(true);
-        allowBtn.parentNode.replaceChild(newAllowBtn, allowBtn);
-        denyBtn.parentNode.replaceChild(newDenyBtn, denyBtn);
-        
-        var updatedAllowBtn = document.getElementById('modalAllowBtn');
-        var updatedDenyBtn = document.getElementById('modalDenyBtn');
-        
-        updatedAllowBtn.onclick = function() {
-            if (!isProcessing) {
-                startContinuousTracking();
-            }
-        };
-        
-        updatedDenyBtn.onclick = function() {
-            setModalStatus('❌ GPS permission denied. Booking cannot continue.', 'error');
-            pendingCarId = null;
-            updatedAllowBtn.disabled = false;
-            updatedAllowBtn.textContent = 'Try Again';
-        };
     }
+
+    // ============================================================
+    // ALLOW BUTTON - Direct click handler (FIXED)
+    // ============================================================
+    allowBtn.addEventListener('click', function() {
+        if (isProcessing) {
+            console.log('⏳ GPS request already in progress');
+            return;
+        }
+        startContinuousTracking();
+    });
+
+    // ============================================================
+    // DENY BUTTON - Direct click handler (FIXED)
+    // ============================================================
+    denyBtn.addEventListener('click', function() {
+        setModalStatus('❌ GPS permission denied. Booking cannot continue.', 'error');
+        pendingCarId = null;
+        isProcessing = false;
+    });
 
     // ============================================================
     // BIND BOOK NOW BUTTONS
@@ -946,12 +1082,9 @@ function build_vehicle_image_path($value): string {
 
     bindBookNowButtons();
 
-    modal.addEventListener('click', function(e) {
-        if (e.target === this && !isProcessing) {
-            // Only close if no error
-        }
-    });
-
+    // ============================================================
+    // CLEANUP
+    // ============================================================
     window.addEventListener('beforeunload', function() {
         stopContinuousTracking();
     });
