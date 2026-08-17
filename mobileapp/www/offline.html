@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>No Internet Connection</title>
+<style>
+    /*
+        Matches the Carbnb homepage (index.php) color palette exactly:
+        background #1e1e1e, card #2a2a2a, blue accent #00bfff,
+        orange accent #ff8c00, body text #cfcfcf, hover #e07b00.
+
+        This file is bundled INSIDE the app and loaded from local
+        storage, not the internet - so it must never reference any
+        external font, icon, or script. Everything here is self-contained.
+    */
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    html, body {
+        height: 100%;
+        background: #1e1e1e;
+        font-family: 'Segoe UI', Arial, sans-serif;
+    }
+
+    body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+    }
+
+    .offline-card {
+        background: #2a2a2a;
+        border-radius: 20px;
+        padding: 40px 28px;
+        max-width: 340px;
+        width: 100%;
+        text-align: center;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    .logo {
+        font-size: 24px;
+        font-weight: 700;
+        margin-bottom: 36px;
+    }
+
+    .logo .car { color: #00bfff; }
+    .logo .bnb { color: #ff8c00; }
+
+    .icon-circle {
+        width: 88px;
+        height: 88px;
+        border-radius: 50%;
+        background: #1e1e1e;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 24px;
+    }
+
+    .icon-circle svg {
+        width: 40px;
+        height: 40px;
+    }
+
+    h1 {
+        color: #f5f5f5;
+        font-size: 19px;
+        font-weight: 700;
+        margin-bottom: 10px;
+    }
+
+    p.subtitle {
+        color: #9ca3af;
+        font-size: 13.5px;
+        line-height: 1.6;
+        margin-bottom: 30px;
+    }
+
+    #retryBtn {
+        display: block;
+        width: 100%;
+        padding: 14px;
+        background: #ff8c00;
+        color: #1a1a1a;
+        font-weight: 700;
+        font-size: 15px;
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: background 0.2s ease, transform 0.2s ease;
+    }
+
+    #retryBtn:active {
+        background: #e07b00;
+        transform: translateY(1px);
+    }
+
+    #retryBtn:disabled {
+        background: #5a4326;
+        color: #9ca3af;
+        cursor: default;
+    }
+
+    #statusText {
+        margin-top: 14px;
+        font-size: 12.5px;
+        color: #6b7280;
+        min-height: 16px;
+    }
+</style>
+</head>
+<body>
+
+<div class="offline-card">
+
+    <div class="logo"><span class="car">Car</span><span class="bnb">bnb</span></div>
+
+    <div class="icon-circle">
+        <!-- Inline SVG "no signal" icon - no external icon font, works fully offline -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="#ff8c00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0" opacity="0.35"></path>
+            <path d="M1.42 9a16 16 0 0 1 21.16 0" opacity="0.2"></path>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+            <line x1="1" y1="1" x2="23" y2="23"></line>
+        </svg>
+    </div>
+
+    <h1>No internet connection</h1>
+    <p class="subtitle">Check your Wi-Fi or mobile data, then try again.</p>
+
+    <button id="retryBtn">Retry</button>
+    <div id="statusText"></div>
+
+</div>
+
+<script>
+    // Tapping Retry navigates to a special carbnb://retry URL. The native
+    // Android app (MainActivity.java) intercepts that exact URL, checks
+    // real connectivity, and either loads the live site again or brings
+    // the user right back to this same page if still offline - this file
+    // has no way to check connectivity itself since it's a plain local
+    // HTML page with no app-specific APIs available to it.
+    document.getElementById('retryBtn').addEventListener('click', function () {
+        var btn = this;
+        var status = document.getElementById('statusText');
+        btn.disabled = true;
+        btn.textContent = 'Checking...';
+        status.textContent = '';
+
+        window.location.href = 'carbnb://retry';
+
+        // If we're still here after a moment, the app decided we're still
+        // offline and sent us back to this same page - reset the button.
+        setTimeout(function () {
+            btn.disabled = false;
+            btn.textContent = 'Retry';
+            status.textContent = 'Still no connection.';
+        }, 1200);
+    });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,64 @@
+name: Build Carbnb APK
+
+# Runs every time you push to main, and can also be triggered manually
+# from the "Actions" tab on GitHub.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'mobileapp/**'
+      - '.github/workflows/build-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed so the workflow can create/update a Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Java (required by Gradle/Android build)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install Capacitor project dependencies
+        working-directory: mobileapp
+        run: npm install
+
+      - name: Sync Capacitor Android project
+        working-directory: mobileapp
+        run: npx cap sync android
+
+      - name: Make gradlew executable
+        working-directory: mobileapp/android
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        working-directory: mobileapp/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK for clarity
+        run: cp mobileapp/android/app/build/outputs/apk/debug/app-debug.apk Carbnb.apk
+
+      - name: Publish APK to a GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-apk
+          name: "Carbnb Mobile App (latest build)"
+          body: "Automatically built from the latest commit. Download Carbnb.apk below and install on Android."
+          files: Carbnb.apk
+          # Move the "latest-apk" tag forward each time instead of creating a new release every push
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

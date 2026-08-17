@@ -1,0 +1,9 @@
+{
+  "appId": "com.carbnb.app",
+  "appName": "Carbnb",
+  "webDir": "www",
+  "server": {
+    "url": "https://carbnb.freepage.cc",
+    "cleartextTrafficPermitted": true
+  }
+}

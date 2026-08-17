@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Camera Access Needed</title>
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    html, body {
+        height: 100%;
+        background: #1e1e1e;
+        font-family: 'Segoe UI', Arial, sans-serif;
+    }
+
+    body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+    }
+
+    .permission-card {
+        background: #2a2a2a;
+        border-radius: 20px;
+        padding: 40px 28px;
+        max-width: 340px;
+        width: 100%;
+        text-align: center;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    .logo {
+        font-size: 24px;
+        font-weight: 700;
+        margin-bottom: 36px;
+    }
+
+    .logo .car { color: #00bfff; }
+    .logo .bnb { color: #ff8c00; }
+
+    .icon-circle {
+        width: 88px;
+        height: 88px;
+        border-radius: 50%;
+        background: #1e1e1e;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 24px;
+    }
+
+    .icon-circle svg {
+        width: 42px;
+        height: 42px;
+    }
+
+    h1 {
+        color: #f5f5f5;
+        font-size: 19px;
+        font-weight: 700;
+        margin-bottom: 10px;
+    }
+
+    p.subtitle {
+        color: #9ca3af;
+        font-size: 13.5px;
+        line-height: 1.6;
+        margin-bottom: 30px;
+    }
+
+    #allowBtn {
+        display: block;
+        width: 100%;
+        padding: 14px;
+        background: #ff8c00;
+        color: #1a1a1a;
+        font-weight: 700;
+        font-size: 15px;
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        margin-bottom: 12px;
+        transition: background 0.2s ease, transform 0.2s ease;
+    }
+
+    #allowBtn:active {
+        background: #e07b00;
+        transform: translateY(1px);
+    }
+
+    #skipBtn {
+        display: block;
+        width: 100%;
+        padding: 12px;
+        background: transparent;
+        color: #6b7280;
+        font-size: 13.5px;
+        border: none;
+        cursor: pointer;
+        text-decoration: underline;
+    }
+</style>
+</head>
+<body>
+
+<div class="permission-card">
+
+    <div class="logo"><span class="car">Car</span><span class="bnb">bnb</span></div>
+
+    <div class="icon-circle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#ff8c00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
+        </svg>
+    </div>
+
+    <h1>Camera access needed</h1>
+    <p class="subtitle">Carbnb uses your camera for face registration and verification, so renters can securely confirm their identity.</p>
+
+    <button id="allowBtn">Allow Camera Access</button>
+    <button id="skipBtn">Not now</button>
+
+</div>
+
+<script>
+    // Both buttons hand off to native Android code (MainActivity.java),
+    // which is what actually shows the real system Allow/Deny popup and
+    // then continues on to the page the user was originally trying to
+    // reach (face registration or verification).
+    document.getElementById('allowBtn').addEventListener('click', function () {
+        window.location.href = 'carbnb://request-camera';
+    });
+
+    document.getElementById('skipBtn').addEventListener('click', function () {
+        window.location.href = 'carbnb://skip-camera';
+    });
+</script>
+
+</body>
+</html>
