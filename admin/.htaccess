@@ -1,0 +1,39 @@
+# ============================================================
+# Allow access to location_tracker.php
+# ============================================================
+
+# Allow the file to be accessed
+<Files "location_tracker.php">
+    Require all granted
+    Allow from all
+    Satisfy Any
+</Files>
+
+# Disable ModSecurity for this file (if causing issues)
+<IfModule mod_security.c>
+    SecRuleEngine Off
+</IfModule>
+
+# Allow POST and GET requests
+<Limit GET POST>
+    Require all granted
+</Limit>
+
+# Set proper headers for JSON responses
+<IfModule mod_headers.c>
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    Header set Access-Control-Allow-Headers "Content-Type"
+</IfModule>
+
+# Disable caching for this file (so location updates are fresh)
+<FilesMatch "location_tracker\.php$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+</FilesMatch>
+
+# ============================================================
+# Handle 403 errors - redirect to a custom error or allow
+# ============================================================
+ErrorDocument 403 /location_tracker.php
