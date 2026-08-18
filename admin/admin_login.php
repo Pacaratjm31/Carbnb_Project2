@@ -93,7 +93,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
       </form>
 
       <a href="admin_register.php" class="back-link">Create Administrator Account</a>
-      <a href="../home.php" class="back-link">← Back to Home</a>
+      <a href="index.php" class="back-link">← Back to Home</a>
 
       <div class="footer">
         <strong><span style="color:var(--accent-2);">Car</span><span style="color:var(--accent);">bnb</span></strong>
