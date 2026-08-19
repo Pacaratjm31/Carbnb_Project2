@@ -289,6 +289,7 @@ $total_reviews = (int) $rating_stats['total_reviews'];
 // Check if renter has a completed or returned booking for this vehicle
         $hasCompletedBooking = false;
         $hasReviewed = false;
+        $hasActiveBooking = false;
         if (!$account_restricted) {
             $stmt = $conn->prepare("SELECT id FROM bookings WHERE renter_id = ? AND vehicle_id = ? AND (status = 'completed' OR status = 'return_requested') LIMIT 1");
             $stmt->execute([$user_id, $car['id']]);
@@ -298,9 +299,16 @@ $total_reviews = (int) $rating_stats['total_reviews'];
             $stmt = $conn->prepare("SELECT id FROM reviews WHERE renter_id = ? AND vehicle_id = ? LIMIT 1");
             $stmt->execute([$user_id, $car['id']]);
             $hasReviewed = (bool) $stmt->fetch();
+
+            // FIXED: renter already has an unfinished booking on this vehicle
+            $stmt = $conn->prepare("SELECT id FROM bookings WHERE renter_id = ? AND vehicle_id = ? AND status IN ('pending_location', 'pending', 'approved') LIMIT 1");
+            $stmt->execute([$user_id, $car['id']]);
+            $hasActiveBooking = (bool) $stmt->fetch();
         }
         ?>
-        <?php if ($car['status'] === 'available'): ?>
+        <?php if ($hasActiveBooking): ?>
+            <button class="btn-book" disabled style="opacity:0.6;cursor:not-allowed;">Already Booked</button>
+        <?php elseif ($car['status'] === 'available'): ?>
             <a href="book.php?car_id=<?= $car['id'] ?>" class="btn-book">Book Now</a>
         <?php endif; ?>
         <a href="comment_rate.php?vehicle_id=<?= $car['id'] ?>" class="btn-book" style="background:#17a2b8;">Comment & Rate</a>

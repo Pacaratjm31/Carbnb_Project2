@@ -85,7 +85,7 @@ function getAllRentersWithStatus($pdo, $thresholdSeconds = LOCATION_ACTIVE_THRES
             INNER JOIN bookings b ON b.renter_id = u.id
             WHERE u.role = 'renter'
             AND u.is_deleted = 0
-            AND b.status IN ('pending', 'approved')
+            AND b.status IN ('pending_location', 'pending', 'approved')
             AND b.start_date <= CURDATE()
             AND b.end_date >= CURDATE()
             ORDER BY u.full_name ASC
@@ -343,7 +343,7 @@ function verifyActiveBooking($pdo, $userId, $bookingId) {
             FROM bookings
             WHERE id = ?
             AND renter_id = ?
-            AND status IN ('pending', 'approved')
+            AND status IN ('pending_location', 'pending', 'approved')
             AND start_date <= CURDATE()
             AND end_date >= CURDATE()
             LIMIT 1
@@ -371,7 +371,7 @@ function getUserActiveBookings($pdo, $userId) {
             FROM bookings b
             INNER JOIN vehicles v ON b.vehicle_id = v.id
             WHERE b.renter_id = ?
-            AND b.status IN ('pending', 'approved')
+            AND b.status IN ('pending_location', 'pending', 'approved')
             AND b.start_date <= CURDATE()
             AND b.end_date >= CURDATE()
             ORDER BY b.start_date ASC

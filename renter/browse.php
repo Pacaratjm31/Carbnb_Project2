@@ -179,6 +179,7 @@ function renderCarCard($car, $user_id, $conn, $account_state) {
     
     $hasCompletedBooking = false;
     $hasReviewed = false;
+    $hasActiveBooking = false;
     if (!$account_state['restricted']) {
         $stmt = $conn->prepare("SELECT id FROM bookings WHERE renter_id = ? AND vehicle_id = ? AND status = 'completed' LIMIT 1");
         $stmt->execute([$user_id, $car['id']]);
@@ -187,6 +188,13 @@ function renderCarCard($car, $user_id, $conn, $account_state) {
         $stmt = $conn->prepare("SELECT id FROM reviews WHERE renter_id = ? AND vehicle_id = ? LIMIT 1");
         $stmt->execute([$user_id, $car['id']]);
         $hasReviewed = (bool) $stmt->fetch();
+
+        // FIXED: renter already has an unfinished booking on this vehicle
+        // (still pending GPS/admin approval or currently rented) - hide
+        // "Book Now" so they can't book the same car twice
+        $stmt = $conn->prepare("SELECT id FROM bookings WHERE renter_id = ? AND vehicle_id = ? AND status IN ('pending_location', 'pending', 'approved', 'return_requested') LIMIT 1");
+        $stmt->execute([$user_id, $car['id']]);
+        $hasActiveBooking = (bool) $stmt->fetch();
     }
     
     ?>
@@ -231,7 +239,10 @@ function renderCarCard($car, $user_id, $conn, $account_state) {
                         <?= $account_state['status'] === 'disapproved' ? 'Access Restricted' : 'Approval Pending' ?>
                     </button>
                 <?php elseif ($approval === 'approved'): ?>
-                    <?php if ($status === 'available'): ?>
+                    <?php if ($hasActiveBooking): ?>
+                        <!-- FIXED: hide Book Now once this renter already has an active booking on this car -->
+                        <button class="book-btn disabled" disabled>Already Booked</button>
+                    <?php elseif ($status === 'available'): ?>
                         <!-- FIXED: Book Now only shows when vehicle is available -->
                         <a href="book.php?car_id=<?= (int) $car['id'] ?>" class="book-btn book-now-btn">Book Now</a>
                     <?php else: ?>
