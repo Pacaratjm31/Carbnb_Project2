@@ -92,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         http_response_code(403);
         echo json_encode([
             'success' => false,
-            'message' => 'Registered face template is missing.'
+            'message' => 'Registered face template is corrupted or invalid.'
         ]);
         exit();
     }
@@ -205,7 +205,10 @@ if (empty($user['face_descriptor'])) {
     exit();
 }
 
-$registeredFaceImage = "../" . $user['face_image'];
+$registeredFaceImage = !empty($user['face_image'])
+    ? "../" . $user['face_image']
+    : null;
+
 $registeredFaceDescriptor = json_decode($user['face_descriptor'], true);
 
 // DEBUG: Log the descriptor to check if it's valid

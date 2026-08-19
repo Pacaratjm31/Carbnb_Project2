@@ -23,38 +23,48 @@ if ($ajax && ($_GET['section'] ?? '') === 'overview-table') {
 }
 
 // ============================================
-// AJAX: Location Status Refresh
+// AJAX: Location Status Refresh (PER RENTER)
 // ============================================
 if ($ajax && ($_GET['section'] ?? '') === 'location-status') {
   header('Content-Type: application/json');
   
-  // Ensure variables are defined
-  $hasRecentLocation = isset($hasRecentLocation) ? $hasRecentLocation : false;
-  $latestLocationTime = isset($latestLocationTime) ? $latestLocationTime : null;
-  $recentLocationUser = isset($recentLocationUser) ? $recentLocationUser : '';
-  $totalActiveRenters = isset($totalActiveRenters) ? $totalActiveRenters : 0;
+  // FIXED: Use LOCATION_ACTIVE_THRESHOLD_SECONDS constant instead of undefined variable
+  $freshData = getAllRentersWithStatus($pdo, LOCATION_ACTIVE_THRESHOLD_SECONDS);
   
-  $status = 'inactive';
-  $message = '🔴 Location Tracking Inactive — No recent location updates.';
-  $user = '';
-  $time = '';
-  $activeCount = 0;
-  
-  if ($hasRecentLocation && $latestLocationTime) {
-    $status = 'active';
-    $user = $recentLocationUser ?? 'Unknown Renter';
-    $time = date('h:i:s A', strtotime($latestLocationTime));
-    $activeCount = $totalActiveRenters;
-    $message = "🟢 Location Tracking Active — {$activeCount} renter(s) currently sharing location.";
+  // Build response with all renters and their status
+  $renters = [];
+  foreach ($freshData['renters'] as $renter) {
+    $status = $renter['status_info'];
+    $renters[] = [
+      'user_id' => $renter['user_id'],
+      'full_name' => $renter['full_name'] ?? 'Unknown Renter',
+      'status' => $status['status'],
+      'status_label' => $status['status_label'],
+      'icon' => $status['icon'],
+      'seconds_ago' => $status['seconds_ago'] ?? null,
+      'recorded_at' => $renter['recorded_at'],
+      'latitude' => $renter['latitude'],
+      'longitude' => $renter['longitude'],
+      'reason' => $status['reason'] ?? null
+    ];
   }
+  
+  // Determine overall status
+  $overallStatus = $freshData['active_count'] > 0 ? 'active' : 'inactive';
+  $overallMessage = $freshData['active_count'] > 0 
+    ? '🟢 ' . $freshData['active_count'] . ' renter(s) currently sharing location'
+    : '🔴 No renters are currently sharing their location';
   
   echo json_encode([
     'success' => true,
-    'status' => $status,
-    'message' => $message,
-    'user' => $user,
-    'time' => $time,
-    'active_count' => $activeCount
+    'overall_status' => $overallStatus,
+    'overall_message' => $overallMessage,
+    'active_count' => $freshData['active_count'],
+    'inactive_count' => $freshData['inactive_count'] - ($freshData['no_location_count'] ?? 0),
+    'no_location_count' => $freshData['no_location_count'] ?? 0,
+    'total' => $freshData['total'],
+    'renters' => $renters,
+    'threshold_seconds' => LOCATION_ACTIVE_THRESHOLD_SECONDS
   ]);
   exit;
 }
@@ -81,7 +91,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
   exit;
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -101,6 +110,11 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       border-radius: 12px;
       border: 1px solid #e5e7eb;
       background: #fff;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .location-status-card .status-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -176,15 +190,86 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     .location-status-card .view-tracker-link:hover {
       text-decoration: underline;
     }
+    
+    /* Renter list inside location status */
+    .location-status-card .renter-list {
+      margin-top: 8px;
+      border-top: 1px solid #f3f4f6;
+      padding-top: 12px;
+    }
+    .location-status-card .renter-list .renter-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      font-size: 14px;
+      border-bottom: 1px solid #f9fafb;
+    }
+    .location-status-card .renter-list .renter-item:last-child {
+      border-bottom: none;
+    }
+    .location-status-card .renter-list .renter-name {
+      font-weight: 500;
+      color: #1a1a2e;
+    }
+    .location-status-card .renter-list .renter-status {
+      font-size: 12px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-weight: 500;
+    }
+    .location-status-card .renter-list .renter-status.active {
+      background: #dcfce7;
+      color: #16a34a;
+    }
+    .location-status-card .renter-list .renter-status.inactive {
+      background: #fee2e2;
+      color: #dc2626;
+    }
+    .location-status-card .renter-list .renter-status.no-location {
+      background: #f3f4f6;
+      color: #6b7280;
+    }
+    .location-status-card .renter-list .renter-time {
+      color: #6b7280;
+      font-size: 12px;
+    }
+    .location-status-card .renter-list .renter-icon {
+      font-size: 16px;
+      margin-right: 6px;
+    }
+    .location-status-card .renter-list .empty-renters {
+      color: #9ca3af;
+      font-size: 14px;
+      text-align: center;
+      padding: 8px 0;
+    }
+    .location-status-card .renter-list .renter-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .location-status-card .renter-list .renter-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
 
     @media (max-width: 576px) {
-      .location-status-card {
+      .location-status-card .status-header {
         flex-direction: column;
         align-items: flex-start;
       }
       .location-status-card .status-right {
         width: 100%;
         justify-content: space-between;
+      }
+      .location-status-card .renter-list .renter-item {
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .location-status-card .renter-list .renter-right {
+        flex-wrap: wrap;
       }
     }
 
@@ -369,37 +454,71 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         </div>
       </section>
 
-      <!-- ============================================ -->
-      <!-- Location Tracking Status Section              -->
-      <!-- ============================================ -->
+      <!-- ============================================
+       LOCATION STATUS CARD - PER RENTER
+       ============================================ -->
       <section class="location-status-card" id="locationStatusCard">
-        <div class="status-left">
-          <span class="status-icon" id="statusIcon"><?= $hasRecentLocation ? '🟢' : '🔴' ?></span>
-          <div>
-            <div class="status-text" id="statusText">
-              <?php if ($hasRecentLocation && $latestLocationTime): ?>
-                🟢 Location Tracking Active — <?= $totalActiveRenters ?> renter(s) currently sharing location.
-              <?php else: ?>
-                🔴 Location Tracking Inactive — No recent location updates.
-              <?php endif; ?>
-            </div>
-            <div class="status-detail" id="statusDetail">
-              <?php if ($hasRecentLocation && $latestLocationTime): ?>
-                <?php if ($recentLocationUser): ?>
-                  Last: <?= htmlspecialchars($recentLocationUser) ?> at <?= date('h:i:s A', strtotime($latestLocationTime)) ?>
+        <div class="status-header">
+          <div class="status-left">
+            <span class="status-icon" id="statusIcon"><?= $hasActiveRenters ? '🟢' : '🔴' ?></span>
+            <div>
+              <div class="status-text" id="statusText">
+                <?php if ($hasActiveRenters): ?>
+                  🟢 <?= $totalActiveRenters ?> renter(s) currently sharing location
+                <?php else: ?>
+                  🔴 No renters are currently sharing their location
                 <?php endif; ?>
-              <?php else: ?>
-                No location updates received in the last <?= isset($locationThresholdSeconds) ? $locationThresholdSeconds : 30 ?> seconds
-              <?php endif; ?>
+              </div>
+              <div class="status-detail" id="statusDetail">
+                <?php if ($totalActiveRenters > 0 || $totalInactiveRenters > 0 || $totalNoLocationRenters > 0): ?>
+                  Active: <?= $totalActiveRenters ?> | Inactive: <?= $totalInactiveRenters - $totalNoLocationRenters ?> | No location: <?= $totalNoLocationRenters ?>
+                <?php else: ?>
+                  No renters found in the system
+                <?php endif; ?>
+              </div>
             </div>
           </div>
+          <div class="status-right">
+            <span class="status-badge <?= $hasActiveRenters ? 'active' : 'inactive' ?>" id="statusBadge">
+              <span class="dot"></span>
+              <?= $hasActiveRenters ? 'Active' : 'Inactive' ?>
+            </span>
+            <a href="location_tracker.php" class="view-tracker-link">View Map →</a>
+          </div>
         </div>
-        <div class="status-right">
-          <span class="status-badge <?= $hasRecentLocation ? 'active' : 'inactive' ?>" id="statusBadge">
-            <span class="dot"></span>
-            <?= $hasRecentLocation ? 'Active' : 'Inactive' ?>
-          </span>
-          <a href="location_tracker.php" class="view-tracker-link">View Map →</a>
+        
+        <!-- Renter List -->
+        <div class="renter-list" id="renterList">
+          <?php if (empty($locationRenters)): ?>
+            <div class="empty-renters">No renters found in the system</div>
+          <?php else: ?>
+            <?php foreach ($locationRenters as $renter): 
+              $status = $renter['status_info'];
+              $statusClass = $status['status'] === 'active' ? 'active' : 'inactive';
+              if ($status['reason'] === 'no_location') {
+                $statusClass = 'no-location';
+              }
+              $timeDisplay = '';
+              if ($status['status'] === 'active' && isset($status['seconds_ago'])) {
+                $timeDisplay = $status['seconds_ago'] . ' seconds ago';
+              } elseif ($status['status'] === 'inactive' && isset($status['seconds_ago']) && $status['reason'] !== 'no_location') {
+                $timeDisplay = $status['seconds_ago'] . ' seconds ago';
+              } elseif ($status['reason'] === 'no_location') {
+                $timeDisplay = 'No location data';
+              }
+            ?>
+              <div class="renter-item">
+                <div class="renter-left">
+                  <span class="renter-icon"><?= $status['icon'] ?></span>
+                  <span class="renter-name"><?= htmlspecialchars($renter['full_name'] ?? 'Unknown Renter') ?></span>
+                </div>
+                <div class="renter-right">
+                  <span class="renter-status <?= $statusClass ?>"><?= $status['status_label'] ?></span>
+                  <span class="renter-time"><?= $timeDisplay ?></span>
+                </div>
+              </div>
+            <?php endforeach; ?>
+          <?php endif; ?>
         </div>
       </section>
 
@@ -595,9 +714,16 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     })();
 
     // ============================================================
-    // LOCATION STATUS - Live refresh every 10 seconds (FIXED)
+    // LOCATION STATUS - Live refresh every 10 seconds
     // ============================================================
     (function () {
+      function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
       function refreshLocationStatus() {
         const url = 'dashboard.php?ajax=1&section=location-status';
         
@@ -607,29 +733,63 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
           .then(function (response) { return response.json(); })
           .then(function (data) {
             if (data.success) {
-              // Update status text
               const statusText = document.getElementById('statusText');
               const statusDetail = document.getElementById('statusDetail');
               const statusBadge = document.getElementById('statusBadge');
               const statusIcon = document.getElementById('statusIcon');
+              const renterList = document.getElementById('renterList');
               
-              if (statusText) statusText.textContent = data.message;
-              
+              if (statusText) statusText.textContent = data.overall_message;
               if (statusDetail) {
-                if (data.status === 'active') {
-                  statusDetail.textContent = 'Last: ' + data.user + ' at ' + data.time;
-                } else {
-                  statusDetail.textContent = 'No location updates received in the last 30 seconds';
-                }
+                statusDetail.textContent = 'Active: ' + data.active_count + ' | Inactive: ' + data.inactive_count + ' | No location: ' + data.no_location_count;
               }
-              
               if (statusBadge) {
-                statusBadge.className = 'status-badge ' + data.status;
-                statusBadge.innerHTML = '<span class="dot"></span> ' + (data.status === 'active' ? 'Active' : 'Inactive');
+                statusBadge.className = 'status-badge ' + data.overall_status;
+                statusBadge.innerHTML = '<span class="dot"></span> ' + (data.overall_status === 'active' ? 'Active' : 'Inactive');
+              }
+              if (statusIcon) {
+                statusIcon.textContent = data.overall_status === 'active' ? '🟢' : '🔴';
               }
               
-              if (statusIcon) {
-                statusIcon.textContent = data.status === 'active' ? '🟢' : '🔴';
+              if (renterList && data.renters) {
+                let html = '';
+                if (data.renters.length === 0) {
+                  html = '<div class="empty-renters">No renters found in the system</div>';
+                } else {
+                  data.renters.forEach(function(renter) {
+                    let statusClass = renter.status === 'active' ? 'active' : 'inactive';
+                    if (renter.reason === 'no_location') {
+                      statusClass = 'no-location';
+                    }
+                    
+                    let timeDisplay = '';
+                    if (renter.status === 'active' && renter.seconds_ago !== null && renter.seconds_ago !== undefined) {
+                      timeDisplay = renter.seconds_ago + ' seconds ago';
+                    } else if (renter.status === 'inactive' && renter.seconds_ago !== null && renter.seconds_ago !== undefined && renter.reason !== 'no_location') {
+                      timeDisplay = renter.seconds_ago + ' seconds ago';
+                    } else if (renter.reason === 'no_location') {
+                      timeDisplay = 'No location data';
+                    }
+                    
+                    const safeName = escapeHtml(renter.full_name);
+                    const safeStatusLabel = escapeHtml(renter.status_label);
+                    const safeIcon = escapeHtml(renter.icon);
+                    
+                    html += `
+                      <div class="renter-item">
+                        <div class="renter-left">
+                          <span class="renter-icon">${safeIcon}</span>
+                          <span class="renter-name">${safeName}</span>
+                        </div>
+                        <div class="renter-right">
+                          <span class="renter-status ${statusClass}">${safeStatusLabel}</span>
+                          <span class="renter-time">${timeDisplay}</span>
+                        </div>
+                      </div>
+                    `;
+                  });
+                }
+                renterList.innerHTML = html;
               }
             }
           })
@@ -638,7 +798,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
           });
       }
 
-      // FIXED: Call immediately on page load, then every 10 seconds
       refreshLocationStatus();
       setInterval(refreshLocationStatus, 10000);
     })();
@@ -655,14 +814,13 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
 
       let isDropdownOpen = false;
 
-      // Helper function to escape HTML
       function escapeHtml(text) {
+        if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
       }
 
-      // Toggle dropdown
       if (bellIcon) {
         bellIcon.addEventListener('click', function (e) {
           e.preventDefault();
@@ -677,7 +835,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         });
       }
 
-      // Close dropdown on outside click
       document.addEventListener('click', function (e) {
         const bell = document.getElementById('notificationBell');
         if (bell && !bell.contains(e.target)) {
@@ -686,7 +843,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         }
       });
 
-      // Render notifications in dropdown
       function renderNotifications(notifications) {
         if (!notificationList) return;
 
@@ -706,18 +862,22 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
             minute: '2-digit',
             hour12: true
           });
+          
+          const safeTitle = escapeHtml(notif.title);
+          const safeMessage = escapeHtml(notif.message);
+          const safeTime = escapeHtml(time);
+          
           html += `
             <div class="notification-item ${unreadClass}" data-id="${notif.id}">
-              <div class="notif-title">${escapeHtml(notif.title)}</div>
-              <div class="notif-message">${escapeHtml(notif.message)}</div>
-              <div class="notif-time">${time}</div>
+              <div class="notif-title">${safeTitle}</div>
+              <div class="notif-message">${safeMessage}</div>
+              <div class="notif-time">${safeTime}</div>
               ${notif.user_id ? `<a href="manage_users.php?view=${notif.user_id}" class="notif-link">View user</a>` : ''}
             </div>
           `;
         });
         notificationList.innerHTML = html;
 
-        // Mark unread items as read when clicked
         document.querySelectorAll('.notification-item.unread').forEach(function (item) {
           item.addEventListener('click', function () {
             const id = this.dataset.id;
@@ -725,13 +885,12 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
               fetch('location_tracker.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'action=mark_read&notification_id=' + id
+                body: 'action=mark_read&notification_id=' + encodeURIComponent(id)
               })
               .then(function (response) { return response.json(); })
               .then(function (data) {
                 if (data.success) {
                   item.classList.remove('unread');
-                  // Update badge count
                   refreshNotifications();
                 }
               })
@@ -743,9 +902,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         });
       }
 
-      // Refresh notification count and list
       function refreshNotifications() {
-        // Update count
         fetch('dashboard.php?ajax=1&section=notification-count')
           .then(function (response) { return response.json(); })
           .then(function (data) {
@@ -763,7 +920,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
             console.log('Notification count refresh failed:', error);
           });
 
-        // Update list if dropdown is open
         if (isDropdownOpen) {
           fetch('dashboard.php?ajax=1&section=notifications')
             .then(function (response) { return response.json(); })
@@ -778,7 +934,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         }
       }
 
-      // Mark all as read
       if (markAllBtn) {
         markAllBtn.addEventListener('click', function (e) {
           e.preventDefault();
@@ -788,7 +943,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
               fetch('location_tracker.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'action=mark_read&notification_id=' + id
+                body: 'action=mark_read&notification_id=' + encodeURIComponent(id)
               })
               .then(function (response) { return response.json(); })
               .then(function (data) {
@@ -805,7 +960,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         });
       }
 
-      // Initial load and periodic refresh
       setTimeout(refreshNotifications, 1000);
       setInterval(refreshNotifications, 10000);
     })();

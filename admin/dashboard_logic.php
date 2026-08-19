@@ -1,6 +1,7 @@
 <?php
 // Dashboard Logic - Statistics and data for admin dashboard
 require_once 'admin_auth.php';
+require_once __DIR__ . '/helpers/location_helper.php';
 
 // ============================================
 // DECLARE VARIABLES FOR VS CODE / IDE
@@ -31,13 +32,17 @@ $unreadNotifications = 0;
 $recentNotifications = [];
 
 // ============================================
-// LOCATION TRACKING STATUS VARIABLES
+// LOCATION TRACKING STATUS VARIABLES (PER RENTER)
 // ============================================
-$locationThresholdSeconds = 30;
-$hasRecentLocation = false;
-$latestLocationTime = null;
-$recentLocationUser = null;
+$locationThresholdSeconds = LOCATION_ACTIVE_THRESHOLD_SECONDS;
+$locationRenters = [];
+$activeLocationRenters = [];
+$inactiveLocationRenters = [];
 $totalActiveRenters = 0;
+$totalInactiveRenters = 0;
+$totalNoLocationRenters = 0;
+$totalRentersWithLocation = 0;
+$hasActiveRenters = false;
 
 // ============================================
 // ERROR VARIABLE
@@ -186,41 +191,29 @@ try {
     }
 
     // ============================================
-    // FETCH LOCATION TRACKING STATUS
+    // FETCH LOCATION TRACKING STATUS (PER RENTER)
     // ============================================
     // Check if location_tracker table exists
     $stmt = $pdo->query("SHOW TABLES LIKE 'location_tracker'");
     if ($stmt->rowCount() > 0) {
-        // Get the most recent location update (last X seconds = Active)
-        $stmt = $pdo->prepare("
-            SELECT 
-                lt.recorded_at,
-                u.full_name,
-                lt.user_id
-            FROM location_tracker lt
-            LEFT JOIN users u ON lt.user_id = u.id
-            WHERE lt.recorded_at > DATE_SUB(NOW(), INTERVAL ? SECOND)
-            AND u.is_deleted = 0
-            ORDER BY lt.recorded_at DESC
-            LIMIT 1
-        ");
-        $stmt->execute([$locationThresholdSeconds]);
-        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $locationData = getAllRentersWithStatus($pdo, $locationThresholdSeconds);
         
-        if ($result) {
-            $hasRecentLocation = true;
-            $latestLocationTime = $result['recorded_at'];
-            $recentLocationUser = $result['full_name'] ?? 'Unknown Renter';
-        }
+        // Populate location variables
+        $locationRenters = $locationData['renters'];
+        $totalActiveRenters = $locationData['active_count'];
+        $totalInactiveRenters = $locationData['inactive_count'];
+        $totalNoLocationRenters = $locationData['no_location_count'] ?? 0;
+        $totalRentersWithLocation = $totalActiveRenters + ($totalInactiveRenters - $totalNoLocationRenters);
+        $hasActiveRenters = $totalActiveRenters > 0;
         
-        // Count total active renters (locations in last X seconds)
-        $stmt = $pdo->prepare("
-            SELECT COUNT(DISTINCT user_id) 
-            FROM location_tracker 
-            WHERE recorded_at > DATE_SUB(NOW(), INTERVAL ? SECOND)
-        ");
-        $stmt->execute([$locationThresholdSeconds]);
-        $totalActiveRenters = (int)$stmt->fetchColumn();
+        // Split into active and inactive arrays for easier display
+        $activeLocationRenters = array_filter($locationRenters, function($renter) {
+            return $renter['status_info']['status'] === 'active';
+        });
+        
+        $inactiveLocationRenters = array_filter($locationRenters, function($renter) {
+            return $renter['status_info']['status'] === 'inactive';
+        });
     }
 
 } catch (PDOException $e) {

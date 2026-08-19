@@ -35,11 +35,25 @@ if (!isset($_SESSION['face_registration_user_id']) || (int) $_SESSION['face_regi
 }
 
 // ============================================
-// VALIDATE FACE ENCODING
+// FIX: Strict 128-value descriptor validation
 // ============================================
 $descriptor = json_decode($faceEncoding, true);
-if (!is_array($descriptor) || count($descriptor) < 2) {
-    die("Invalid face descriptor.");
+
+// Check JSON decode success
+if (!is_array($descriptor)) {
+    die("Invalid face descriptor: JSON decode failed.");
+}
+
+// Check exact length (face-api.js always returns 128 values)
+if (count($descriptor) !== 128) {
+    die("Invalid face descriptor: expected 128 values, got " . count($descriptor));
+}
+
+// Validate each value is numeric and finite
+foreach ($descriptor as $value) {
+    if (!is_numeric($value) || !is_finite((float)$value)) {
+        die("Invalid face descriptor: non-numeric or non-finite value detected.");
+    }
 }
 
 // ============================================
@@ -69,13 +83,26 @@ if (!file_put_contents($filePath, $imageData)) {
 }
 
 // ============================================
+// ENCODE DESCRIPTOR WITH ERROR CHECK
+// ============================================
+$descriptorJson = json_encode($descriptor);
+
+// FIX: Check json_encode success before storing
+if ($descriptorJson === false) {
+    // Clean up file if JSON encoding fails
+    if (file_exists($filePath)) {
+        unlink($filePath);
+    }
+    die("Failed to encode face descriptor. Please try again.");
+}
+
+// ============================================
 // UPDATE DATABASE - FIXED PATH
 // ============================================
 // IMPORTANT: Store path relative to root (without leading slash)
 // This matches the path structure in your database:
 // "uploads/face_auth/filename.png"
 $dbFacePath = "uploads/face_auth/" . $fileName;
-$descriptorJson = json_encode($descriptor);
 
 try {
     $stmt = $pdo->prepare("

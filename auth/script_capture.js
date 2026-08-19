@@ -17,7 +17,7 @@
     let modelLoadAttempts = 0;
     let videoReady = false;
     const MAX_MODEL_ATTEMPTS = 3;
-    const MIN_FACE_SIZE = 40;
+    const MIN_FACE_SIZE = 40; // KEPT: Registration threshold remains 40
 
     function updateStatus(message, type = 'info') {
         statusMessage.textContent = message;
@@ -143,6 +143,7 @@
                     return;
                 }
 
+                // KEPT: Registration threshold remains 0.3
                 const detection = await faceapi.detectSingleFace(
                     video,
                     new faceapi.TinyFaceDetectorOptions({
@@ -208,6 +209,7 @@
         updateStatus("Capturing face...", 'info');
 
         try {
+            // KEPT: Registration threshold remains 0.3
             const fullDetection = await faceapi
                 .detectSingleFace(
                     video,

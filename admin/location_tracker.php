@@ -11,6 +11,9 @@ if (session_status() === PHP_SESSION_NONE) {
 // Load database connection
 require_once __DIR__ . '/../database/db.php';
 
+// Load location helper
+require_once __DIR__ . '/helpers/location_helper.php';
+
 // Get database connection
 $pdo = $GLOBALS['pdo'] ?? null;
 
@@ -51,16 +54,15 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
     }
     
     $user_id = (int) $_SESSION['user_id'];
-    $latitude = isset($_POST['latitude']) ? (float) $_POST['latitude'] : null;
-    $longitude = isset($_POST['longitude']) ? (float) $_POST['longitude'] : null;
-    $accuracy = isset($_POST['accuracy']) ? (float) $_POST['accuracy'] : 0;
-    $booking_id = isset($_POST['booking_id']) ? (int) $_POST['booking_id'] : null;
     
-    // Use server time instead of browser timestamp
-    $recorded_at = date('Y-m-d H:i:s');
+    // ============================================================
+    // FIXED: Validate raw POST values before casting
+    // ============================================================
+    $latitude_raw = isset($_POST['latitude']) ? $_POST['latitude'] : null;
+    $longitude_raw = isset($_POST['longitude']) ? $_POST['longitude'] : null;
     
-    // Validate coordinates
-    if ($latitude === null || $longitude === null) {
+    // Check if values are present
+    if ($latitude_raw === null || $longitude_raw === null) {
         echo json_encode([
             'success' => false,
             'message' => 'Missing latitude or longitude'
@@ -68,6 +70,24 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
         exit;
     }
     
+    // Check if values are numeric
+    if (!is_numeric($latitude_raw) || !is_numeric($longitude_raw)) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid coordinates: must be numeric values'
+        ]);
+        exit;
+    }
+    
+    $latitude = (float) $latitude_raw;
+    $longitude = (float) $longitude_raw;
+    $accuracy = isset($_POST['accuracy']) ? (float) $_POST['accuracy'] : 0;
+    $booking_id = isset($_POST['booking_id']) ? (int) $_POST['booking_id'] : null;
+    
+    // Use server time instead of browser timestamp
+    $recorded_at = date('Y-m-d H:i:s');
+    
+    // Validate coordinate ranges
     if ($latitude < -90 || $latitude > 90 || $longitude < -180 || $longitude > 180) {
         echo json_encode([
             'success' => false,
@@ -216,7 +236,7 @@ if ($isPost && $action === 'mark_read') {
 }
 
 // ============================================================
-// GET: Admin fetches locations for map
+// GET: Admin fetches ACTIVE locations for map
 // ============================================================
 if ($ajax && ($_GET['section'] ?? '') === 'locations') {
     header('Content-Type: application/json');
@@ -233,32 +253,35 @@ if ($ajax && ($_GET['section'] ?? '') === 'locations') {
             exit;
         }
         
-        // Get locations from last 30 minutes with booking_id
-        $stmt = $pdo->prepare("
-            SELECT 
-                lt.id,
-                lt.user_id,
-                lt.booking_id,
-                lt.latitude,
-                lt.longitude,
-                lt.accuracy,
-                lt.recorded_at,
-                u.full_name
-            FROM location_tracker lt
-            LEFT JOIN users u ON lt.user_id = u.id
-            WHERE lt.recorded_at > DATE_SUB(NOW(), INTERVAL 30 MINUTE)
-            AND (u.is_deleted = 0 OR u.is_deleted IS NULL)
-            ORDER BY lt.recorded_at DESC
-        ");
-        $stmt->execute();
-        $points = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // Get ONLY ACTIVE renters using the helper
+        // Uses LOCATION_ACTIVE_THRESHOLD_SECONDS constant from helper
+        $activeData = getActiveRenters($pdo, LOCATION_ACTIVE_THRESHOLD_SECONDS);
+        $points = [];
+        
+        foreach ($activeData['renters'] as $renter) {
+            // Only include renters with valid location data
+            if ($renter['latitude'] !== null && $renter['longitude'] !== null) {
+                $points[] = [
+                    'id' => $renter['location_id'] ?? null,
+                    'user_id' => $renter['user_id'],
+                    'booking_id' => $renter['booking_id'],
+                    'latitude' => (float) $renter['latitude'],
+                    'longitude' => (float) $renter['longitude'],
+                    'accuracy' => (float) ($renter['accuracy'] ?? 0),
+                    'recorded_at' => $renter['recorded_at'],
+                    'full_name' => $renter['full_name'] ?? 'Unknown Renter',
+                    'status' => 'active'
+                ];
+            }
+        }
         
         echo json_encode([
             'success' => true,
             'points' => $points,
             'count' => count($points),
-            'message' => count($points) . ' location(s) found',
-            'server_time' => date('Y-m-d H:i:s')
+            'message' => count($points) . ' active renter(s) found',
+            'server_time' => date('Y-m-d H:i:s'),
+            'threshold_seconds' => LOCATION_ACTIVE_THRESHOLD_SECONDS
         ]);
         
     } catch (Exception $e) {
@@ -312,12 +335,16 @@ if ($ajax && ($_GET['section'] ?? '') === 'debug') {
         $stmt = $pdo->query("SELECT COUNT(*) as user_count FROM users WHERE is_deleted = 0");
         $userCount = $stmt->fetch(PDO::FETCH_ASSOC);
         
+        // Get active count from helper
+        $activeData = getActiveRenters($pdo, LOCATION_ACTIVE_THRESHOLD_SECONDS);
+        
         echo json_encode([
             'success' => true,
             'table_exists' => $tableExists,
             'server_time' => $serverInfo['server_time'] ?? 'unknown',
             'total_users' => (int) ($userCount['user_count'] ?? 0),
             'total_locations' => count($points),
+            'active_count' => $activeData['active_count'],
             'points' => $points
         ]);
         
@@ -493,7 +520,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       <section class="hero-card">
         <div>
           <h2>Live renter movement map</h2>
-          <p>View recent shared GPS positions from renters in the last 30 minutes.</p>
+          <p>View active renters currently sharing their location (updated within <?= LOCATION_ACTIVE_THRESHOLD_SECONDS ?> seconds).</p>
         </div>
         <div>
           <span class="tracker-badge">🔄 Auto-refresh every 10 seconds</span>
@@ -527,7 +554,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     // ============================================================
     // CONFIGURATION
     // ============================================================
-    const REFRESH_INTERVAL = 10000;
+    const REFRESH_INTERVAL = 10000; // 10 seconds - DO NOT CHANGE
     let map = null;
     let markers = [];
     let polylines = [];
@@ -678,7 +705,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       clearMarkers();
 
       if (!points || points.length === 0) {
-        setStatus('📍 No renter positions were shared in the last 30 minutes.', 'info');
+        setStatus('📍 No active renters found (latest update must be within <?= LOCATION_ACTIVE_THRESHOLD_SECONDS ?> seconds).', 'info');
         hideError();
         return;
       }
@@ -698,22 +725,25 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       Object.keys(users).forEach(uid => {
         const u = users[uid];
         u.points.sort((a, b) => new Date(a.recorded_at) - new Date(b.recorded_at));
-        const coords = u.points.filter(pt => pt.latitude && pt.longitude).map(pt => [pt.latitude, pt.longitude]);
+        const coords = u.points
+          .filter(pt => pt.latitude !== null && pt.latitude !== undefined && pt.longitude !== null && pt.longitude !== undefined)
+          .map(pt => [parseFloat(pt.latitude), parseFloat(pt.longitude)]);
         if (!coords.length) return;
 
         const color = colorForUser(parseInt(uid, 10));
         
         if (coords.length > 1) {
-          const poly = L.polyline(coords, { color: color, weight: 4, opacity: 0.8 }).addTo(map);
+          const poly = L.polyline(coords, { color: color, weight: 3, opacity: 0.7 }).addTo(map);
           polylines.push(poly);
         }
 
         const last = u.points[u.points.length - 1];
-        if (last.latitude && last.longitude) {
-          const marker = L.circleMarker([last.latitude, last.longitude], { 
+        if (last.latitude !== null && last.latitude !== undefined && last.longitude !== null && last.longitude !== undefined) {
+          const marker = L.circleMarker([parseFloat(last.latitude), parseFloat(last.longitude)], { 
             radius: 8, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.9 
           }).addTo(map);
-          marker.bindPopup(`<strong>${u.full_name}</strong><br>${new Date(last.recorded_at).toLocaleString()}`);
+          const timeDisplay = new Date(last.recorded_at).toLocaleString();
+          marker.bindPopup(`<strong>${u.full_name}</strong><br>🟢 Active<br>Last update: ${timeDisplay}`);
           markers.push(marker);
         }
 
@@ -725,7 +755,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         try { map.fitBounds(allBounds, { padding: [50, 50] }); } catch(e) {}
       }
 
-      setStatus(`📍 Showing {count} renter${userCount === 1 ? '' : 's'} with recent positions.`, 'success', userCount);
+      setStatus(`📍 Showing {count} active renter${userCount === 1 ? '' : 's'} with recent positions.`, 'success', userCount);
       hideError();
     }
 
