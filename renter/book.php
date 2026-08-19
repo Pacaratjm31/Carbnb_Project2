@@ -103,66 +103,136 @@ function build_vehicle_image_path($value): string {
 
 $imgPath = build_vehicle_image_path($car['car_image'] ?? '');
 
+// ============================================
+// POST HANDLER - All responses are JSON
+// ============================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Validate form token to prevent duplicate submissions
+    // Validate form token
     $tokenError = validate_form_token_or_error('book_vehicle');
     if ($tokenError) {
-        die($tokenError);
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => $tokenError]);
+        exit;
+    }
+
+    // location_granted is flow control only
+    $locationGranted = isset($_POST['location_granted']) && $_POST['location_granted'] === '1';
+    
+    if (!$locationGranted) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => false,
+            'message' => 'Location permission is required to complete booking. Please allow GPS access.'
+        ]);
+        exit;
     }
 
     $start = trim($_POST['start'] ?? '');
     $end = trim($_POST['end'] ?? '');
 
     if (empty($start) || empty($end)) {
-        die('Please select valid dates.');
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => 'Please select valid dates.']);
+        exit;
     }
 
     if ($start > $end) {
-        die('End date must be after start date.');
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => 'End date must be after start date.']);
+        exit;
     }
 
     $today = date('Y-m-d');
     if ($start < $today) {
-        die('You cannot book a past date.');
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => 'You cannot book a past date.']);
+        exit;
     }
 
     if (($car['status'] ?? 'available') !== 'available') {
-        die('This vehicle is not available.');
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => 'This vehicle is not available.']);
+        exit;
     }
 
-    // Use transaction to prevent race condition
     try {
         $conn->beginTransaction();
         
-        $check = $conn->prepare("SELECT COUNT(*) FROM bookings WHERE vehicle_id = ? AND status IN ('pending', 'approved') AND (start_date <= ? AND end_date >= ?)");
+        // Check for existing pending_location booking for THIS user
+        $checkStmt = $conn->prepare("
+            SELECT id 
+            FROM bookings 
+            WHERE vehicle_id = ? 
+            AND renter_id = ? 
+            AND status = 'pending_location' 
+            AND start_date = ? 
+            AND end_date = ?
+            LIMIT 1
+        ");
+        $checkStmt->execute([$car_id, $user_id, $start, $end]);
+        $existingBooking = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($existingBooking) {
+            $booking_id = (int) $existingBooking['id'];
+            $conn->commit();
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => true,
+                'booking_id' => $booking_id,
+                'redirect' => 'paid.php?booking_id=' . $booking_id
+            ]);
+            exit;
+        }
+
+        // Conflict check for OTHER users
+        $check = $conn->prepare("
+            SELECT COUNT(*) 
+            FROM bookings 
+            WHERE vehicle_id = ? 
+            AND status IN ('pending', 'approved', 'pending_location') 
+            AND start_date <= ? 
+            AND end_date >= ?
+        ");
         $check->execute([$car_id, $end, $start]);
 
         if ($check->fetchColumn() > 0) {
             $conn->rollBack();
-            die('This car is already booked for the selected dates.');
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => false,
+                'message' => 'This car is already booked for the selected dates.'
+            ]);
+            exit;
         }
 
         $diff = strtotime($end) - strtotime($start);
         $days = floor($diff / (60 * 60 * 24)) + 1;
         $days = max(1, $days);
-
         $total_price = $days * (float) $car['rate'];
 
-        $stmt = $conn->prepare("INSERT INTO bookings (renter_id, vehicle_id, start_date, end_date, total_days, total_price, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')");
+        $stmt = $conn->prepare("INSERT INTO bookings (renter_id, vehicle_id, start_date, end_date, total_days, total_price, status) VALUES (?, ?, ?, ?, ?, ?, 'pending_location')");
         $stmt->execute([$user_id, $car_id, $start, $end, $days, $total_price]);
 
         $booking_id = $conn->lastInsertId();
-
-        $update = $conn->prepare("UPDATE vehicles SET availability_status = 'rented' WHERE id = ?");
-        $update->execute([$car_id]);
-
         $conn->commit();
         
-        header('Location: paid.php?booking_id=' . $booking_id);
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => true,
+            'booking_id' => $booking_id,
+            'redirect' => 'paid.php?booking_id=' . $booking_id
+        ]);
         exit;
+        
     } catch (PDOException $e) {
         $conn->rollBack();
-        die('Booking failed. Please try again.');
+        error_log('Booking error: ' . $e->getMessage());
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => false,
+            'message' => 'Booking failed. Please try again.'
+        ]);
+        exit;
     }
 }
 ?>
@@ -175,8 +245,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <title>Book Car | Carbnb</title>
 <link rel="stylesheet" href="css/renter_style.css?v=2">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+
 <style>
-/* Image loading styles */
 .car-img-large {
     background: #f0f0f0;
     min-height: 200px;
@@ -202,10 +272,142 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     0% { background-position: -200% 0; }
     100% { background-position: 200% 0; }
 }
+
+.location-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.6);
+    z-index: 9999;
+    justify-content: center;
+    align-items: center;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+.location-modal-overlay.show {
+    display: flex;
+}
+.location-modal {
+    background: #fff;
+    border-radius: 20px;
+    padding: 30px 28px;
+    max-width: 420px;
+    width: 92%;
+    box-shadow: 0 25px 80px rgba(0,0,0,0.35);
+    text-align: center;
+    animation: modalFadeIn 0.4s ease;
+    position: relative;
+    margin: 20px;
+}
+@keyframes modalFadeIn {
+    from { opacity: 0; transform: scale(0.92) translateY(-20px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.location-modal .modal-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+}
+.location-modal h3 {
+    margin: 0 0 8px 0;
+    color: #1a1a2e;
+    font-size: 20px;
+}
+.location-modal p {
+    color: #4b5563;
+    margin-bottom: 20px;
+    font-size: 14px;
+    line-height: 1.6;
+}
+.location-modal .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+.location-modal .modal-actions button {
+    padding: 12px 28px;
+    border: none;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 15px;
+    transition: all 0.2s;
+    min-width: 110px;
+}
+.location-modal .btn-allow {
+    background: #0d6efd;
+    color: #fff;
+}
+.location-modal .btn-allow:hover:not(:disabled) {
+    background: #0b5ed7;
+}
+.location-modal .btn-allow:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+.location-modal .btn-deny {
+    background: #e5e7eb;
+    color: #1a1a2e;
+}
+.location-modal .btn-deny:hover {
+    background: #d1d5db;
+}
+.location-modal .permission-status {
+    margin-top: 16px;
+    font-size: 14px;
+    color: #6b7280;
+    min-height: 24px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: all 0.3s;
+}
+.location-modal .permission-status.loading {
+    color: #0d6efd;
+    background: #eff6ff;
+}
+.location-modal .permission-status.success {
+    color: #16a34a;
+    background: #dcfce7;
+}
+.location-modal .permission-status.error {
+    color: #dc2626;
+    background: #fee2e2;
+}
+.location-modal .permission-status .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #e5e7eb;
+    border-top-color: #0d6efd;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
 </style>
 </head>
 
 <body>
+
+<!-- Location Permission Modal -->
+<div id="locationModal" class="location-modal-overlay">
+    <div class="location-modal">
+        <div class="modal-icon">📍</div>
+        <h3>Location Permission Required</h3>
+        <p>To complete your booking, we need access to your real GPS location. This helps us ensure a safe and secure rental experience.</p>
+        <div class="modal-actions">
+            <button id="modalAllowBtn" class="btn-allow">Allow Location</button>
+            <button id="modalDenyBtn" class="btn-deny">Don't Allow</button>
+        </div>
+        <div id="modalStatus" class="permission-status">Please allow location access to continue booking.</div>
+    </div>
+</div>
 
 <div class="booking-container">
 
@@ -245,15 +447,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <p>Total: <strong>₱<span id="total-price">0.00</span></strong></p>
         </div>
 
-        <button type="submit" class="btn-book">Proceed to Payment</button>
+        <button type="submit" class="btn-book" id="submitBtn">Proceed to Payment</button>
         <a href="browse.php" class="btn-return">Return</a>
     </form>
 
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
 <script>
-// Image loading handler
+// ============================================================
+// IMAGE LOADING HANDLER
+// ============================================================
 document.addEventListener('DOMContentLoaded', function() {
     const img = document.querySelector('.car-img-large');
     if (img) {
@@ -273,6 +478,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// ============================================================
+// FLATPICKR DATE PICKER
+// ============================================================
 const startInput = document.getElementById('start_date');
 const endInput = document.getElementById('end_date');
 const daysDisplay = document.getElementById('total-days');
@@ -280,20 +488,17 @@ const priceDisplay = document.getElementById('total-price');
 const rate = parseFloat("<?= $car['rate'] ?>") || 0;
 const today = '<?= date('Y-m-d') ?>';
 
-// Initialize Flatpickr for start date
 const startPicker = flatpickr(startInput, {
     dateFormat: 'Y-m-d',
     minDate: today,
     onChange: function(selectedDates, dateStr) {
         if (selectedDates[0]) {
-            // Update end date minimum to be same as start date
             endPicker.set('minDate', dateStr);
         }
         updatePrice();
     }
 });
 
-// Initialize Flatpickr for end date
 const endPicker = flatpickr(endInput, {
     dateFormat: 'Y-m-d',
     minDate: today,
@@ -320,20 +525,334 @@ function updatePrice() {
     }
 }
 
-// Prevent double-click on submit button
-document.addEventListener('DOMContentLoaded', function() {
-    const form = document.getElementById('bookingForm');
-    if (form) {
-        form.addEventListener('submit', function() {
-            const submitBtn = this.querySelector('button[type="submit"]');
-            if (submitBtn) {
-                submitBtn.disabled = true;
-                submitBtn.textContent = 'Processing...';
-            }
-        });
+// ============================================================
+// LOCATION PERMISSION VARIABLES
+// ============================================================
+const modal = document.getElementById('locationModal');
+const allowBtn = document.getElementById('modalAllowBtn');
+const denyBtn = document.getElementById('modalDenyBtn');
+const modalStatus = document.getElementById('modalStatus');
+const bookingForm = document.getElementById('bookingForm');
+const submitBtn = document.getElementById('submitBtn');
+
+let isProcessing = false;
+let gpsPosition = null;
+let isGpsAcquired = false;
+
+// ============================================================
+// SET MODAL STATUS
+// ============================================================
+function setModalStatus(message, type) {
+    modalStatus.textContent = message;
+    modalStatus.className = 'permission-status';
+    if (type) {
+        modalStatus.classList.add(type);
     }
+}
+
+// ============================================================
+// GET BASE URL
+// ============================================================
+function getBaseUrl() {
+    return window.location.protocol + '//' + window.location.host;
+}
+
+// ============================================================
+// GET API PATH
+// ============================================================
+function getApiPath() {
+    var path = window.location.pathname;
+    var basePath = path.substring(0, path.lastIndexOf('/'));
+    var projectPath = basePath.substring(0, basePath.lastIndexOf('/') + 1);
+    if (projectPath === '' || projectPath === '/') {
+        projectPath = '/';
+    }
+    return projectPath;
+}
+
+// ============================================================
+// SEND LOCATION TO SERVER - ONLY CALLED WITH REAL booking_id
+// ============================================================
+function sendLocationToServer(position, bookingId) {
+    if (!bookingId || bookingId < 1) {
+        console.error('❌ sendLocationToServer called with invalid booking_id:', bookingId);
+        return Promise.reject(new Error('Invalid booking_id for location tracking'));
+    }
+
+    var latitude = position.coords.latitude;
+    var longitude = position.coords.longitude;
+    var accuracy = position.coords.accuracy || 0;
+    var recorded_at = new Date().toISOString().slice(0,19).replace("T"," ");
+
+    console.log('📍 Sending GPS with REAL booking_id:', bookingId);
+
+    var formData = new URLSearchParams();
+    formData.append('latitude', latitude);
+    formData.append('longitude', longitude);
+    formData.append('accuracy', accuracy);
+    formData.append('recorded_at', recorded_at);
+    formData.append('booking_id', bookingId);
+
+    var projectPath = getApiPath();
+    var apiUrl = getBaseUrl() + projectPath + 'admin/location_tracker.php';
+
+    return fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData.toString()
+    })
+    .then(function(response) {
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+        }
+        return response.json();
+    })
+    .then(function(data) {
+        if (!data.success) {
+            throw new Error(data.message || 'Server error');
+        }
+        return data;
+    });
+}
+
+// ============================================================
+// GET GPS POSITION - ONLY FOR PERMISSION, DOES NOT SEND TO SERVER
+// ============================================================
+function getGpsPosition() {
+    return new Promise(function(resolve, reject) {
+        if (!navigator.geolocation) {
+            reject(new Error('Geolocation not supported'));
+            return;
+        }
+
+        setModalStatus('📡 Getting GPS location...', 'loading');
+        allowBtn.disabled = true;
+        allowBtn.textContent = 'Getting GPS...';
+
+        var gpsTimeout = setTimeout(function() {
+            setModalStatus('⏱️ GPS request timed out. Please try again.', 'error');
+            allowBtn.disabled = false;
+            allowBtn.textContent = 'Try Again';
+            isProcessing = false;
+            reject(new Error('GPS timeout'));
+        }, 20000);
+
+        navigator.geolocation.getCurrentPosition(
+            function(position) {
+                clearTimeout(gpsTimeout);
+                console.log('✅ GPS acquired:', position.coords.latitude, position.coords.longitude);
+                setModalStatus('📍 GPS acquired! Creating booking...', 'loading');
+                resolve(position);
+            },
+            function(error) {
+                clearTimeout(gpsTimeout);
+                console.error('❌ GPS Error:', error);
+                
+                var message = '';
+                switch(error.code) {
+                    case 1:
+                        message = '❌ Location permission denied. You must allow GPS access.';
+                        break;
+                    case 2:
+                        message = '⚠️ GPS unavailable. Please enable GPS on your device.';
+                        break;
+                    case 3:
+                        message = '⏱️ GPS request timed out. Please try again.';
+                        break;
+                    default:
+                        message = '⚠️ GPS error: ' + error.message;
+                }
+                
+                setModalStatus(message, 'error');
+                allowBtn.disabled = false;
+                allowBtn.textContent = 'Try Again';
+                isProcessing = false;
+                reject(new Error(message));
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 30000,
+                maximumAge: 5000
+            }
+        );
+    });
+}
+
+// ============================================================
+// SUBMIT BOOKING FORM AFTER GPS SUCCESS
+// ============================================================
+function submitBookingForm(position) {
+    gpsPosition = position;
+
+    var formData = new FormData(bookingForm);
+    formData.append('location_granted', '1');
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating booking...';
+
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(response) {
+        return response.json();
+    })
+    .then(function(data) {
+        if (data.success && data.booking_id) {
+            var realBookingId = data.booking_id;
+            console.log('✅ Booking created! REAL ID:', realBookingId);
+            
+            setModalStatus('📍 Saving location with booking #' + realBookingId + '...', 'loading');
+            
+            sendLocationToServer(gpsPosition, realBookingId)
+                .then(function(locationData) {
+                    console.log('✅ First location saved with REAL booking_id:', realBookingId);
+                    
+                    // Start GPS tracker using the shared GPSTracker
+                    if (window.GPSTracker) {
+                        window.GPSTracker.start(realBookingId);
+                        console.log('✅ GPS tracker started with booking_id:', realBookingId);
+                    } else {
+                        console.warn('⚠️ GPSTracker not available. Tracking will not continue.');
+                    }
+                    
+                    setModalStatus('✅ GPS tracking active! Ready to proceed.', 'success');
+                    
+                    // Hide Allow/Deny buttons
+                    allowBtn.style.display = 'none';
+                    denyBtn.style.display = 'none';
+                    
+                    // Show Proceed to Payment button
+                    var proceedBtn = document.getElementById('proceedToPaymentBtn');
+                    if (!proceedBtn) {
+                        proceedBtn = document.createElement('button');
+                        proceedBtn.id = 'proceedToPaymentBtn';
+                        proceedBtn.className = 'btn-allow';
+                        proceedBtn.textContent = 'Proceed to Payment →';
+                        proceedBtn.style.width = '100%';
+                        proceedBtn.style.marginTop = '10px';
+                        
+                        var modalActions = document.querySelector('.modal-actions');
+                        if (modalActions) {
+                            modalActions.appendChild(proceedBtn);
+                        }
+                    }
+                    proceedBtn.style.display = 'block';
+                    
+                    var newProceedBtn = proceedBtn.cloneNode(true);
+                    proceedBtn.parentNode.replaceChild(newProceedBtn, proceedBtn);
+                    
+                    newProceedBtn.addEventListener('click', function() {
+                        window.location.href = data.redirect;
+                    });
+                })
+                .catch(function(err) {
+                    console.error('❌ Failed to save location:', err.message);
+                    
+                    setModalStatus('❌ Failed to save GPS location: ' + err.message + '. Please try again.', 'error');
+                    
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Proceed to Payment';
+                    
+                    isProcessing = false;
+                    isGpsAcquired = false;
+                    gpsPosition = null;
+                    
+                    allowBtn.disabled = false;
+                    allowBtn.textContent = 'Try Again';
+                });
+        } else {
+            setModalStatus('❌ ' + (data.message || 'Booking failed'), 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Proceed to Payment';
+            isProcessing = false;
+            isGpsAcquired = false;
+            gpsPosition = null;
+        }
+    })
+    .catch(function(error) {
+        console.error('Booking submission error:', error);
+        setModalStatus('❌ Booking failed: ' + error.message, 'error');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Proceed to Payment';
+        isProcessing = false;
+        isGpsAcquired = false;
+        gpsPosition = null;
+    });
+}
+
+// ============================================================
+// FORM SUBMISSION HANDLER
+// ============================================================
+bookingForm.addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    if (!startInput.value || !endInput.value) {
+        alert('Please select both start and end dates.');
+        return;
+    }
+    
+    var start = new Date(startInput.value);
+    var end = new Date(endInput.value);
+    var todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+    
+    if (start < todayDate) {
+        alert('Start date cannot be in the past.');
+        return;
+    }
+    
+    if (end < start) {
+        alert('End date must be after start date.');
+        return;
+    }
+    
+    isProcessing = false;
+    allowBtn.disabled = false;
+    allowBtn.textContent = 'Allow Location';
+    setModalStatus('Please allow location access to continue booking.', '');
+    modal.classList.add('show');
 });
+
+// ============================================================
+// ALLOW BUTTON
+// ============================================================
+allowBtn.onclick = function() {
+    if (isProcessing) return;
+    isProcessing = true;
+    
+    getGpsPosition()
+        .then(function(position) {
+            isGpsAcquired = true;
+            gpsPosition = position;
+            setModalStatus('✅ GPS acquired! Creating booking...', 'success');
+            submitBookingForm(position);
+        })
+        .catch(function(error) {
+            console.error('GPS error:', error.message);
+            isProcessing = false;
+            isGpsAcquired = false;
+        });
+};
+
+// ============================================================
+// DENY BUTTON
+// ============================================================
+denyBtn.onclick = function() {
+    setModalStatus('❌ Location permission is required to book.', 'error');
+    isProcessing = false;
+    isGpsAcquired = false;
+    gpsPosition = null;
+    modal.classList.remove('show');
+};
 </script>
+
+<!-- ============================================================
+     Shared GPS Tracker
+     ============================================================ -->
+<script src="../js/gps_tracker.js?v=<?= time() ?>"></script>
 
 </body>
 </html>

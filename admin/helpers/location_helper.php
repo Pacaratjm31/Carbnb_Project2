@@ -2,6 +2,9 @@
 /**
  * location_helper.php
  * Shared helper functions for location tracking
+ * 
+ * UPDATED: Changed from browse.php-based permission to book.php-based booking flow
+ * Now filters by booking_id to ensure only active bookings are tracked
  */
 
 // ============================================================
@@ -46,13 +49,15 @@ function getRenterStatus($lastRecordedAt, $thresholdSeconds = LOCATION_ACTIVE_TH
 }
 
 // ============================================================
-// Get all renters with their latest location and status
+// UPDATED: Get all renters with their latest location and status
+// Now filters to only show renters with active bookings
 // ============================================================
 function getAllRentersWithStatus($pdo, $thresholdSeconds = LOCATION_ACTIVE_THRESHOLD_SECONDS) {
     try {
-        // Start from users table - get ALL non-deleted renters
-        // For each renter, get their latest location record (any age)
-        // Use a subquery to get the latest location per user
+        // ============================================================
+        // FIX: Only include renters who have an ACTIVE booking
+        // This prevents tracking renters who are just browsing
+        // ============================================================
         $stmt = $pdo->prepare("
             SELECT 
                 u.id AS user_id,
@@ -64,7 +69,10 @@ function getAllRentersWithStatus($pdo, $thresholdSeconds = LOCATION_ACTIVE_THRES
                 lt.longitude,
                 lt.accuracy,
                 lt.recorded_at,
-                lt.booking_id
+                lt.booking_id,
+                b.status AS booking_status,
+                b.start_date,
+                b.end_date
             FROM users u
             LEFT JOIN location_tracker lt
                 ON lt.id = (
@@ -74,8 +82,12 @@ function getAllRentersWithStatus($pdo, $thresholdSeconds = LOCATION_ACTIVE_THRES
                     ORDER BY lt2.recorded_at DESC, lt2.id DESC
                     LIMIT 1
                 )
+            INNER JOIN bookings b ON b.renter_id = u.id
             WHERE u.role = 'renter'
             AND u.is_deleted = 0
+            AND b.status IN ('pending', 'approved')
+            AND b.start_date <= CURDATE()
+            AND b.end_date >= CURDATE()
             ORDER BY u.full_name ASC
         ");
         $stmt->execute();
@@ -124,7 +136,8 @@ function getAllRentersWithStatus($pdo, $thresholdSeconds = LOCATION_ACTIVE_THRES
 }
 
 // ============================================================
-// Get active renters only (for map display)
+// UPDATED: Get active renters only (for map display)
+// Now filters by booking_id to only show renters with active bookings
 // ============================================================
 function getActiveRenters($pdo, $thresholdSeconds = LOCATION_ACTIVE_THRESHOLD_SECONDS) {
     $all = getAllRentersWithStatus($pdo, $thresholdSeconds);
@@ -140,18 +153,70 @@ function getActiveRenters($pdo, $thresholdSeconds = LOCATION_ACTIVE_THRESHOLD_SE
 }
 
 // ============================================================
-// Get status change notifications (for admin notifications)
+// UPDATED: Get renters by booking_id (for specific booking tracking)
 // ============================================================
-function getStatusChangeNotifications($pdo, $userId, $currentStatus) {
-    // Check if we already have a recent notification for this status change
-    $stmt = $pdo->prepare("
+function getRenterByBookingId($pdo, $bookingId) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT 
+                u.id AS user_id,
+                u.full_name,
+                u.status AS account_status,
+                u.is_deleted,
+                b.id AS booking_id,
+                b.status AS booking_status,
+                b.start_date,
+                b.end_date,
+                lt.id AS location_id,
+                lt.latitude,
+                lt.longitude,
+                lt.accuracy,
+                lt.recorded_at
+            FROM users u
+            INNER JOIN bookings b ON b.renter_id = u.id
+            LEFT JOIN location_tracker lt
+                ON lt.id = (
+                    SELECT lt2.id
+                    FROM location_tracker lt2
+                    WHERE lt2.user_id = u.id
+                    AND lt2.booking_id = b.id
+                    ORDER BY lt2.recorded_at DESC, lt2.id DESC
+                    LIMIT 1
+                )
+            WHERE u.role = 'renter'
+            AND u.is_deleted = 0
+            AND b.id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$bookingId]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log('getRenterByBookingId error: ' . $e->getMessage());
+        return null;
+    }
+}
+
+// ============================================================
+// UPDATED: Get status change notifications (for admin notifications)
+// Now uses booking_id for context
+// ============================================================
+function getStatusChangeNotifications($pdo, $userId, $currentStatus, $bookingId = null) {
+    $params = [$userId];
+    $sql = "
         SELECT COUNT(*) as count, MAX(created_at) as last_time
         FROM admin_notifications
         WHERE user_id = ?
         AND notification_type IN ('location_active', 'location_inactive')
         AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
-    ");
-    $stmt->execute([$userId]);
+    ";
+    
+    if ($bookingId) {
+        $sql .= " AND booking_id = ?";
+        $params[] = $bookingId;
+    }
+    
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     
     return [
@@ -162,21 +227,25 @@ function getStatusChangeNotifications($pdo, $userId, $currentStatus) {
 }
 
 // ============================================================
-// Create status change notification
+// UPDATED: Create status change notification with booking context
 // ============================================================
 function createStatusChangeNotification($pdo, $userId, $userName, $newStatus, $bookingId = null) {
     if ($newStatus === 'active') {
         $type = 'location_active';
         $title = '🟢 Location Tracking Active';
-        $message = "{$userName} is now sharing their location.";
+        $message = $bookingId 
+            ? "{$userName} is now sharing their location for booking #{$bookingId}."
+            : "{$userName} is now sharing their location.";
     } else {
         $type = 'location_inactive';
         $title = '🔴 Location Tracking Inactive';
-        $message = "{$userName} has stopped sharing their location.";
+        $message = $bookingId 
+            ? "{$userName} has stopped sharing their location for booking #{$bookingId}."
+            : "{$userName} has stopped sharing their location.";
     }
     
     // Check for recent notification to prevent spam
-    $recent = getStatusChangeNotifications($pdo, $userId, $newStatus);
+    $recent = getStatusChangeNotifications($pdo, $userId, $newStatus, $bookingId);
     if ($recent['has_recent']) {
         return false; // Skip duplicate notification
     }
@@ -192,11 +261,11 @@ function createStatusChangeNotification($pdo, $userId, $userName, $newStatus, $b
 }
 
 // ============================================================
-// Get specific renter's latest location
+// UPDATED: Get specific renter's latest location by booking_id
 // ============================================================
-function getRenterLatestLocation($pdo, $userId) {
+function getRenterLatestLocation($pdo, $userId, $bookingId = null) {
     try {
-        $stmt = $pdo->prepare("
+        $sql = "
             SELECT 
                 id,
                 user_id,
@@ -208,10 +277,18 @@ function getRenterLatestLocation($pdo, $userId) {
                 created_at
             FROM location_tracker
             WHERE user_id = ?
-            ORDER BY recorded_at DESC, id DESC
-            LIMIT 1
-        ");
-        $stmt->execute([$userId]);
+        ";
+        $params = [$userId];
+        
+        if ($bookingId) {
+            $sql .= " AND booking_id = ?";
+            $params[] = $bookingId;
+        }
+        
+        $sql .= " ORDER BY recorded_at DESC, id DESC LIMIT 1";
+        
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         return $stmt->fetch(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         error_log('getRenterLatestLocation error: ' . $e->getMessage());
@@ -220,11 +297,11 @@ function getRenterLatestLocation($pdo, $userId) {
 }
 
 // ============================================================
-// Get renter's location history (for map timeline)
+// UPDATED: Get renter's location history by booking_id
 // ============================================================
-function getRenterLocationHistory($pdo, $userId, $limit = 50) {
+function getRenterLocationHistory($pdo, $userId, $bookingId = null, $limit = 50) {
     try {
-        $stmt = $pdo->prepare("
+        $sql = "
             SELECT 
                 id,
                 user_id,
@@ -236,14 +313,91 @@ function getRenterLocationHistory($pdo, $userId, $limit = 50) {
                 created_at
             FROM location_tracker
             WHERE user_id = ?
-            ORDER BY recorded_at DESC, id DESC
-            LIMIT ?
-        ");
-        $stmt->execute([$userId, $limit]);
+        ";
+        $params = [$userId];
+        
+        if ($bookingId) {
+            $sql .= " AND booking_id = ?";
+            $params[] = $bookingId;
+        }
+        
+        $sql .= " ORDER BY recorded_at DESC, id DESC LIMIT ?";
+        $params[] = $limit;
+        
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         error_log('getRenterLocationHistory error: ' . $e->getMessage());
         return [];
+    }
+}
+
+// ============================================================
+// NEW: Verify if a booking is active and belongs to a user
+// ============================================================
+function verifyActiveBooking($pdo, $userId, $bookingId) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT id, status, start_date, end_date
+            FROM bookings
+            WHERE id = ?
+            AND renter_id = ?
+            AND status IN ('pending', 'approved')
+            AND start_date <= CURDATE()
+            AND end_date >= CURDATE()
+            LIMIT 1
+        ");
+        $stmt->execute([$bookingId, $userId]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log('verifyActiveBooking error: ' . $e->getMessage());
+        return null;
+    }
+}
+
+// ============================================================
+// NEW: Get all active bookings for a user
+// ============================================================
+function getUserActiveBookings($pdo, $userId) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT 
+                b.id,
+                b.status,
+                b.start_date,
+                b.end_date,
+                v.name AS vehicle_name
+            FROM bookings b
+            INNER JOIN vehicles v ON b.vehicle_id = v.id
+            WHERE b.renter_id = ?
+            AND b.status IN ('pending', 'approved')
+            AND b.start_date <= CURDATE()
+            AND b.end_date >= CURDATE()
+            ORDER BY b.start_date ASC
+        ");
+        $stmt->execute([$userId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log('getUserActiveBookings error: ' . $e->getMessage());
+        return [];
+    }
+}
+
+// ============================================================
+// NEW: Clean up old location records (optional housekeeping)
+// ============================================================
+function cleanupOldLocations($pdo, $daysToKeep = 30) {
+    try {
+        $stmt = $pdo->prepare("
+            DELETE FROM location_tracker
+            WHERE recorded_at < DATE_SUB(NOW(), INTERVAL ? DAY)
+        ");
+        $stmt->execute([$daysToKeep]);
+        return $stmt->rowCount();
+    } catch (PDOException $e) {
+        error_log('cleanupOldLocations error: ' . $e->getMessage());
+        return 0;
     }
 }
 ?>
