@@ -3,21 +3,15 @@
 // DATABASE CONNECTION
 // ============================================================
 
-// Start session for all requests
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Load database connection
 require_once __DIR__ . '/../database/db.php';
-
-// Load location helper
 require_once __DIR__ . '/helpers/location_helper.php';
 
-// Get database connection
 $pdo = $GLOBALS['pdo'] ?? null;
 
-// If connection failed, return safe error
 if (!$pdo) {
     error_log('location_tracker.php: Database connection failed');
     if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['ajax'])) {
@@ -31,9 +25,6 @@ if (!$pdo) {
     die('Database connection error. Please contact administrator.');
 }
 
-// ============================================================
-// REQUEST TYPE DETECTION
-// ============================================================
 $isPost = ($_SERVER['REQUEST_METHOD'] === 'POST');
 $ajax = isset($_GET['ajax']) && $_GET['ajax'] === '1';
 $action = isset($_POST['action']) ? $_POST['action'] : '';
@@ -44,7 +35,6 @@ $action = isset($_POST['action']) ? $_POST['action'] : '';
 if ($isPost && $action !== 'mark_read' && !$ajax) {
     header('Content-Type: application/json');
     
-    // Check if user is logged in
     if (!isset($_SESSION['user_id'])) {
         echo json_encode([
             'success' => false,
@@ -55,13 +45,9 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
     
     $user_id = (int) $_SESSION['user_id'];
     
-    // ============================================================
-    // FIXED: Validate raw POST values before casting
-    // ============================================================
     $latitude_raw = isset($_POST['latitude']) ? $_POST['latitude'] : null;
     $longitude_raw = isset($_POST['longitude']) ? $_POST['longitude'] : null;
     
-    // Check if values are present
     if ($latitude_raw === null || $longitude_raw === null) {
         echo json_encode([
             'success' => false,
@@ -70,7 +56,6 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
         exit;
     }
     
-    // Check if values are numeric
     if (!is_numeric($latitude_raw) || !is_numeric($longitude_raw)) {
         echo json_encode([
             'success' => false,
@@ -83,11 +68,8 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
     $longitude = (float) $longitude_raw;
     $accuracy = isset($_POST['accuracy']) ? (float) $_POST['accuracy'] : 0;
     $booking_id = isset($_POST['booking_id']) ? (int) $_POST['booking_id'] : null;
-    
-    // Use server time instead of browser timestamp
     $recorded_at = date('Y-m-d H:i:s');
     
-    // Validate coordinate ranges
     if ($latitude < -90 || $latitude > 90 || $longitude < -180 || $longitude > 180) {
         echo json_encode([
             'success' => false,
@@ -97,7 +79,6 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
     }
     
     try {
-        // Check if location_tracker table exists
         $stmt = $pdo->query("SHOW TABLES LIKE 'location_tracker'");
         if ($stmt->rowCount() == 0) {
             echo json_encode([
@@ -107,7 +88,6 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
             exit;
         }
         
-        // Check if user exists and is active
         $stmt = $pdo->prepare("SELECT id, full_name FROM users WHERE id = ? AND is_deleted = 0");
         $stmt->execute([$user_id]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -120,7 +100,18 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
             exit;
         }
         
-        // Insert the GPS location with booking_id support
+        if ($booking_id !== null) {
+            $activeBooking = verifyActiveBooking($pdo, $user_id, $booking_id);
+            if (!$activeBooking) {
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'This booking is no longer active. GPS tracking stopped.',
+                    'stop_tracking' => true
+                ]);
+                exit;
+            }
+        }
+        
         if ($booking_id !== null) {
             $stmt = $pdo->prepare("
                 INSERT INTO location_tracker (user_id, booking_id, latitude, longitude, accuracy, recorded_at)
@@ -136,51 +127,7 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
         }
         
         $insertId = $pdo->lastInsertId();
-        
-        // Log successful save
-        error_log("GPS Location saved: ID=$insertId, User=$user_id, Booking=$booking_id, Lat=$latitude, Lng=$longitude, Time=$recorded_at");
-        
-        // Check if this is the first location for this user in the last 30 minutes
-        $stmt = $pdo->prepare("
-            SELECT COUNT(*) 
-            FROM location_tracker 
-            WHERE user_id = ? AND recorded_at > DATE_SUB(NOW(), INTERVAL 30 MINUTE)
-        ");
-        $stmt->execute([$user_id]);
-        $existingLocations = (int) $stmt->fetchColumn();
-        
-        $isFirstLocation = ($existingLocations <= 1);
-        
-        // Create notification only on first location
-        if ($isFirstLocation && $insertId > 0) {
-            $userName = $user['full_name'] ?? 'Renter #' . $user_id;
-            
-            // Check if notification table exists
-            $stmt = $pdo->query("SHOW TABLES LIKE 'admin_notifications'");
-            if ($stmt->rowCount() > 0) {
-                // Check for recent notification (last 5 minutes)
-                $stmt = $pdo->prepare("
-                    SELECT COUNT(*) 
-                    FROM admin_notifications 
-                    WHERE notification_type = 'location_permission_granted' 
-                    AND user_id = ? 
-                    AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
-                ");
-                $stmt->execute([$user_id]);
-                $recentNotification = (int) $stmt->fetchColumn();
-                
-                if ($recentNotification === 0) {
-                    $message = "Renter {$userName} has allowed location access and their current location is now available.";
-                    $stmt = $pdo->prepare("
-                        INSERT INTO admin_notifications 
-                        (notification_type, title, message, user_id, booking_id, is_read, created_at)
-                        VALUES ('location_permission_granted', '📍 Location Permission Granted', ?, ?, ?, 0, NOW())
-                    ");
-                    $stmt->execute([$message, $user_id, $booking_id]);
-                    error_log("Notification created for user: $user_id");
-                }
-            }
-        }
+        error_log("GPS Location saved: ID=$insertId, User=$user_id, Booking=$booking_id");
         
         echo json_encode([
             'success' => true,
@@ -188,7 +135,6 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
             'user_id' => $user_id,
             'user_name' => $user['full_name'],
             'booking_id' => $booking_id,
-            'is_first' => $isFirstLocation,
             'latitude' => $latitude,
             'longitude' => $longitude,
             'recorded_at' => $recorded_at,
@@ -236,13 +182,13 @@ if ($isPost && $action === 'mark_read') {
 }
 
 // ============================================================
-// GET: Admin fetches ACTIVE locations for map
+// GET: Admin fetches locations for ALL active bookings
+// FIXED: Removed start_date restriction to show future bookings.
 // ============================================================
 if ($ajax && ($_GET['section'] ?? '') === 'locations') {
     header('Content-Type: application/json');
     
     try {
-        // Check if table exists
         $stmt = $pdo->query("SHOW TABLES LIKE 'location_tracker'");
         if ($stmt->rowCount() == 0) {
             echo json_encode([
@@ -253,24 +199,59 @@ if ($ajax && ($_GET['section'] ?? '') === 'locations') {
             exit;
         }
         
-        // Get ONLY ACTIVE renters using the helper
-        // Uses LOCATION_ACTIVE_THRESHOLD_SECONDS constant from helper
-        $activeData = getActiveRenters($pdo, LOCATION_ACTIVE_THRESHOLD_SECONDS);
-        $points = [];
+        $stmt = $pdo->prepare("
+            SELECT 
+                u.id AS user_id,
+                u.full_name,
+                b.id AS booking_id,
+                b.status AS booking_status,
+                b.start_date,
+                b.end_date,
+                lt.id AS location_id,
+                lt.latitude,
+                lt.longitude,
+                lt.accuracy,
+                lt.recorded_at
+            FROM users u
+            INNER JOIN bookings b ON b.renter_id = u.id
+            LEFT JOIN location_tracker lt
+                ON lt.id = (
+                    SELECT lt2.id
+                    FROM location_tracker lt2
+                    WHERE lt2.user_id = u.id
+                    AND lt2.booking_id = b.id
+                    ORDER BY lt2.recorded_at DESC, lt2.id DESC
+                    LIMIT 1
+                )
+            WHERE u.role = 'renter'
+            AND u.is_deleted = 0
+            AND b.status IN ('pending_location', 'pending', 'approved')
+            AND b.end_date >= CURDATE()        -- Only bookings that haven't ended
+            ORDER BY u.full_name ASC
+        ");
+        $stmt->execute();
+        $renters = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        foreach ($activeData['renters'] as $renter) {
-            // Only include renters with valid location data
+        $points = [];
+        foreach ($renters as $renter) {
             if ($renter['latitude'] !== null && $renter['longitude'] !== null) {
+                $isRecent = false;
+                if ($renter['recorded_at']) {
+                    $lastUpdate = strtotime($renter['recorded_at']);
+                    $secondsAgo = time() - $lastUpdate;
+                    $isRecent = ($secondsAgo <= LOCATION_ACTIVE_THRESHOLD_SECONDS);
+                }
+                
                 $points[] = [
-                    'id' => $renter['location_id'] ?? null,
                     'user_id' => $renter['user_id'],
                     'booking_id' => $renter['booking_id'],
+                    'full_name' => $renter['full_name'] ?? 'Unknown Renter',
                     'latitude' => (float) $renter['latitude'],
                     'longitude' => (float) $renter['longitude'],
                     'accuracy' => (float) ($renter['accuracy'] ?? 0),
                     'recorded_at' => $renter['recorded_at'],
-                    'full_name' => $renter['full_name'] ?? 'Unknown Renter',
-                    'status' => 'active'
+                    'is_recent' => $isRecent,
+                    'status' => $isRecent ? 'active' : 'inactive',
                 ];
             }
         }
@@ -296,12 +277,11 @@ if ($ajax && ($_GET['section'] ?? '') === 'locations') {
 }
 
 // ============================================================
-// GET: Debug endpoint - Check raw locations
+// GET: Debug endpoint
 // ============================================================
 if ($ajax && ($_GET['section'] ?? '') === 'debug') {
     header('Content-Type: application/json');
     try {
-        // Check if table exists
         $stmt = $pdo->query("SHOW TABLES LIKE 'location_tracker'");
         $tableExists = $stmt->rowCount() > 0;
         
@@ -327,16 +307,11 @@ if ($ajax && ($_GET['section'] ?? '') === 'debug') {
             $points = $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
         
-        // Get server info
         $stmt = $pdo->query("SELECT NOW() AS server_time");
         $serverInfo = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Count users
         $stmt = $pdo->query("SELECT COUNT(*) as user_count FROM users WHERE is_deleted = 0");
         $userCount = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        // Get active count from helper
-        $activeData = getActiveRenters($pdo, LOCATION_ACTIVE_THRESHOLD_SECONDS);
         
         echo json_encode([
             'success' => true,
@@ -344,7 +319,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'debug') {
             'server_time' => $serverInfo['server_time'] ?? 'unknown',
             'total_users' => (int) ($userCount['user_count'] ?? 0),
             'total_locations' => count($points),
-            'active_count' => $activeData['active_count'],
             'points' => $points
         ]);
         
@@ -397,7 +371,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
 }
 
 // ============================================================
-// HTML: Admin Map Page
+// HTML: Admin Map Page (unchanged UI)
 // ============================================================
 ?>
 <!DOCTYPE html>
@@ -520,7 +494,10 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       <section class="hero-card">
         <div>
           <h2>Live renter movement map</h2>
-          <p>View active renters currently sharing their location (updated within <?= LOCATION_ACTIVE_THRESHOLD_SECONDS ?> seconds).</p>
+          <p>
+            Showing <strong>last known positions</strong> for all active renters. 
+            🟢 = recent (within <?= LOCATION_ACTIVE_THRESHOLD_SECONDS ?>s), 🟡 = stale (last known location).
+          </p>
         </div>
         <div>
           <span class="tracker-badge">🔄 Auto-refresh every 10 seconds</span>
@@ -554,7 +531,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     // ============================================================
     // CONFIGURATION
     // ============================================================
-    const REFRESH_INTERVAL = 10000; // 10 seconds - DO NOT CHANGE
+    const REFRESH_INTERVAL = 10000;
     let map = null;
     let markers = [];
     let polylines = [];
@@ -657,7 +634,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       if (type === 'error') statusEl.classList.add('error');
       else if (type === 'success') statusEl.classList.add('success');
       
-      if (count > 0) {
+      if (count !== undefined && count > 0) {
         statusEl.innerHTML = message.replace('{count}', '<span class="count">' + count + '</span>');
       } else {
         statusEl.innerHTML = message;
@@ -695,17 +672,15 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       polylines = [];
     }
 
-    function colorForUser(userId) {
-      const palette = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe'];
-      return palette[Math.abs(userId) % palette.length] || '#19723d';
-    }
-
+    // ============================================================
+    // RENDER POINTS - Shows all renters, green for recent, amber for stale
+    // ============================================================
     function renderPoints(points) {
       if (!map) { if (!initMap()) return; }
       clearMarkers();
 
       if (!points || points.length === 0) {
-        setStatus('📍 No active renters found (latest update must be within <?= LOCATION_ACTIVE_THRESHOLD_SECONDS ?> seconds).', 'info');
+        setStatus('📍 No active renters found with location data.', 'info');
         hideError();
         return;
       }
@@ -730,22 +705,34 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
           .map(pt => [parseFloat(pt.latitude), parseFloat(pt.longitude)]);
         if (!coords.length) return;
 
-        const color = colorForUser(parseInt(uid, 10));
+        const last = u.points[u.points.length - 1];
+        const isRecent = last.is_recent === true;
         
+        const color = isRecent ? '#22c55e' : '#f59e0b';
+        const radius = isRecent ? 9 : 6;
+        const dashArray = isRecent ? null : '5 5';
+
         if (coords.length > 1) {
-          const poly = L.polyline(coords, { color: color, weight: 3, opacity: 0.7 }).addTo(map);
+          const poly = L.polyline(coords, { color: color, weight: 2, opacity: 0.5 }).addTo(map);
           polylines.push(poly);
         }
 
-        const last = u.points[u.points.length - 1];
-        if (last.latitude !== null && last.latitude !== undefined && last.longitude !== null && last.longitude !== undefined) {
-          const marker = L.circleMarker([parseFloat(last.latitude), parseFloat(last.longitude)], { 
-            radius: 8, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.9 
-          }).addTo(map);
-          const timeDisplay = new Date(last.recorded_at).toLocaleString();
-          marker.bindPopup(`<strong>${u.full_name}</strong><br>🟢 Active<br>Last update: ${timeDisplay}`);
-          markers.push(marker);
-        }
+        const marker = L.circleMarker(
+          [parseFloat(last.latitude), parseFloat(last.longitude)], 
+          {
+            radius: radius,
+            fillColor: color,
+            color: '#fff',
+            weight: 2,
+            fillOpacity: 0.9,
+            dashArray: dashArray
+          }
+        ).addTo(map);
+
+        const timeDisplay = last.recorded_at ? new Date(last.recorded_at).toLocaleString() : 'Unknown';
+        const statusText = isRecent ? '🟢 Active (recent)' : '🟡 Last known (stale)';
+        marker.bindPopup(`<strong>${u.full_name}</strong><br>${statusText}<br>Last update: ${timeDisplay}`);
+        markers.push(marker);
 
         coords.forEach(c => allBounds.push(c));
         userCount++;
@@ -755,7 +742,14 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         try { map.fitBounds(allBounds, { padding: [50, 50] }); } catch(e) {}
       }
 
-      setStatus(`📍 Showing {count} active renter${userCount === 1 ? '' : 's'} with recent positions.`, 'success', userCount);
+      const recentCount = points.filter(p => p.is_recent === true).length;
+      const staleCount = points.length - recentCount;
+      
+      let statusMsg = `📍 Showing {count} renter(s) with last known positions.`;
+      if (recentCount > 0) statusMsg += ` 🟢 ${recentCount} recent`;
+      if (staleCount > 0) statusMsg += ` 🟡 ${staleCount} stale`;
+      
+      setStatus(statusMsg, 'success', userCount);
       hideError();
     }
 

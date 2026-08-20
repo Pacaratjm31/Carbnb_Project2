@@ -77,13 +77,28 @@
                 throw new Error('face-api.js not loaded');
             }
 
+            // ============================================================
+            // MOBILE PERFORMANCE FIX: use WebGL (GPU) when available.
+            // Forcing 'cpu' here was the main cause of slow recognition
+            // on mobile - desktop CPUs can brute-force TensorFlow ops
+            // reasonably well, but phone CPUs are far weaker than their
+            // own GPUs at this. WebGL lets the phone's GPU do the work.
+            // Only fall back to CPU if WebGL genuinely isn't available.
+            // ============================================================
             if (faceapi.tf && faceapi.tf.setBackend) {
                 try {
-                    await faceapi.tf.setBackend('cpu');
+                    await faceapi.tf.setBackend('webgl');
                     await faceapi.tf.ready();
-                    console.log("TensorFlow backend set to CPU");
+                    console.log("TensorFlow backend: webgl (GPU-accelerated)");
                 } catch (e) {
-                    console.warn("Could not set CPU backend:", e);
+                    console.warn("WebGL backend unavailable, falling back to CPU:", e);
+                    try {
+                        await faceapi.tf.setBackend('cpu');
+                        await faceapi.tf.ready();
+                        console.log("TensorFlow backend: cpu (fallback)");
+                    } catch (e2) {
+                        console.warn("Could not set any backend explicitly, using default:", e2);
+                    }
                 }
             }
 
@@ -143,11 +158,19 @@
                     return;
                 }
 
+                // ============================================================
+                // MOBILE PERFORMANCE FIX: this loop just checks whether a
+                // face is present/big enough for the live preview - it does
+                // NOT compute the descriptor, so it doesn't need max input
+                // resolution. Dropped from 512 to 320 to reduce per-tick
+                // cost on mobile CPUs/GPUs. The actual capture in
+                // captureFace() below still uses 512 for descriptor quality.
                 // KEPT: Registration threshold remains 0.3
+                // ============================================================
                 const detection = await faceapi.detectSingleFace(
                     video,
                     new faceapi.TinyFaceDetectorOptions({
-                        inputSize: 512,
+                        inputSize: 320,
                         scoreThreshold: 0.3
                     })
                 );

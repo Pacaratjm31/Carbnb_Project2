@@ -247,6 +247,15 @@ error_log("Face Descriptor for user " . $userId . ": " . (is_array($registeredFa
     <div class="camera-wrapper">
         <video id="video" autoplay muted playsinline></video>
         <canvas id="canvas"></canvas>
+
+        <div id="loadingOverlay">
+            <div class="spinner"></div>
+            <p>Loading face verification models...</p>
+        </div>
+
+        <div id="faceIndicator" class="face-detected-indicator">
+            ✅ Face Detected
+        </div>
     </div>
 
     <div id="statusMessage" class="status-message">

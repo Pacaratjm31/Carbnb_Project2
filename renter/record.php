@@ -184,7 +184,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'booking-history') {
                 echo '<button type="submit" name="return_car" class="btn-small">Return Car</button>';
                 echo '</form>';
             } elseif ($b['status'] === 'return_requested') {
-                echo '<span class="text-muted" style="margin-left:10px; font-size:0.9em;">Waiting for owner to inspect and mark vehicle available.</span>';
             }
             echo '</div>';
         }

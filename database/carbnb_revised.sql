@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     end_date DATE NOT NULL,
     total_days INT NOT NULL,
     total_price DECIMAL(10,2) NOT NULL,
-    status ENUM('pending', 'approved', 'disapproved', 'completed') DEFAULT 'pending',
+    status ENUM('pending_location', 'pending', 'approved', 'disapproved', 'completed', 'return_requested') DEFAULT 'pending_location',
     admin_id INT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (renter_id) REFERENCES users(id) ON DELETE CASCADE,

@@ -3,6 +3,8 @@
     const video = document.getElementById("video");
     const verifyBtn = document.getElementById("verifyBtn");
     const statusMessage = document.getElementById("statusMessage");
+    const loadingOverlay = document.getElementById("loadingOverlay");
+    const faceIndicator = document.getElementById("faceIndicator");
 
     // Get the descriptor from window
     const registeredFaceDescriptor = window.registeredFaceDescriptor || [];
@@ -244,13 +246,28 @@
                 throw new Error('face-api.js not loaded');
             }
 
+            // ============================================================
+            // MOBILE PERFORMANCE FIX: use WebGL (GPU) when available.
+            // Forcing 'cpu' here was the main cause of slow recognition
+            // on mobile - desktop CPUs can brute-force TensorFlow ops
+            // reasonably well, but phone CPUs are far weaker than their
+            // own GPUs at this. WebGL lets the phone's GPU do the work.
+            // Only fall back to CPU if WebGL genuinely isn't available.
+            // ============================================================
             if (faceapi.tf && faceapi.tf.setBackend) {
                 try {
-                    await faceapi.tf.setBackend('cpu');
+                    await faceapi.tf.setBackend('webgl');
                     await faceapi.tf.ready();
-                    console.log("TensorFlow backend set to CPU");
+                    console.log("TensorFlow backend: webgl (GPU-accelerated)");
                 } catch (e) {
-                    console.warn("Could not set CPU backend:", e);
+                    console.warn("WebGL backend unavailable, falling back to CPU:", e);
+                    try {
+                        await faceapi.tf.setBackend('cpu');
+                        await faceapi.tf.ready();
+                        console.log("TensorFlow backend: cpu (fallback)");
+                    } catch (e2) {
+                        console.warn("Could not set any backend explicitly, using default:", e2);
+                    }
                 }
             }
 
@@ -263,6 +280,7 @@
             ]);
 
             modelsLoaded = true;
+            if (loadingOverlay) loadingOverlay.classList.add('hidden');
             console.log("Models loaded successfully!");
             updateStatus("Face detection active.");
             
@@ -284,6 +302,7 @@
                 setTimeout(loadModels, 2000);
             } else {
                 updateStatus("Failed to load face models. Check console.");
+                if (loadingOverlay) loadingOverlay.classList.add('hidden');
                 verifyBtn.disabled = true;
             }
         }
@@ -307,12 +326,33 @@
         console.log("Face detection started");
 
         let noFaceCount = 0;
+        let tickCount = 0;
 
         // ============================================================
-        // Detection interval at 300ms for fast response
+        // MOBILE PERFORMANCE FIX: the full pipeline below
+        // (.withFaceLandmarks().withFaceDescriptor()) is the expensive
+        // part - it was running on every single 300ms tick, forever,
+        // even after the person was already recognized. That's fine on
+        // a desktop CPU/GPU but heavy enough on mobile to visibly stall
+        // the page. Now: a cheap box-only presence check runs every
+        // tick for responsive UI feedback, and the expensive descriptor
+        // computation only runs every 3rd tick (~900ms) - still fast
+        // enough to feel instant, at a third of the cost. Once matched,
+        // the whole interval is cleared since there's nothing left to
+        // detect.
         // ============================================================
+        const HEAVY_CHECK_EVERY_N_TICKS = 3;
+
         detectionInterval = setInterval(async () => {
             if (!modelsLoaded || !videoReady) {
+                return;
+            }
+
+            // Already recognized - stop spending CPU/GPU on further
+            // detection. The Verify button is enabled; nothing left to do.
+            if (isRecognized) {
+                clearInterval(detectionInterval);
+                detectionInterval = null;
                 return;
             }
 
@@ -321,8 +361,51 @@
                     return;
                 }
 
+                tickCount++;
+                const runHeavyCheck = (tickCount % HEAVY_CHECK_EVERY_N_TICKS === 0);
+
+                if (!runHeavyCheck) {
+                    // ============================================================
+                    // CHEAP TICK: box presence/size only, no landmarks or
+                    // descriptor - just keeps the UI responsive between
+                    // the real recognition checks.
+                    // ============================================================
+                    const quickDetection = await faceapi.detectSingleFace(
+                        video,
+                        new faceapi.TinyFaceDetectorOptions({
+                            inputSize: 224,
+                            scoreThreshold: 0.5
+                        })
+                    );
+
+                    if (!quickDetection) {
+                        faceDetected = false;
+                        currentDetection = null;
+                        if (faceIndicator) faceIndicator.classList.remove('show');
+                        noFaceCount++;
+                        if (noFaceCount === 10) {
+                            updateStatus("No face detected. Position your face in the camera.");
+                        }
+                        return;
+                    }
+
+                    noFaceCount = 0;
+                    const box = quickDetection.box;
+                    if (box.width < MIN_FACE_SIZE || box.height < MIN_FACE_SIZE) {
+                        faceDetected = false;
+                        currentDetection = null;
+                        if (faceIndicator) faceIndicator.classList.remove('show');
+                        updateStatus("Move closer to the camera.");
+                    } else {
+                        faceDetected = true;
+                        if (faceIndicator) faceIndicator.classList.add('show');
+                        updateStatus("Face detected. Confirming identity...");
+                    }
+                    return;
+                }
+
                 // ============================================================
-                // SINGLE DETECTION PIPELINE
+                // HEAVY TICK: SINGLE DETECTION PIPELINE
                 // Gets: face existence, face size, landmarks, descriptor
                 // ============================================================
                 const fullDetection = await faceapi
@@ -342,6 +425,7 @@
                 if (!fullDetection) {
                     faceDetected = false;
                     currentDetection = null;
+                    if (faceIndicator) faceIndicator.classList.remove('show');
                     noFaceCount++;
                     
                     if (noFaceCount === 10) {
@@ -362,6 +446,7 @@
                 if (box.width < MIN_FACE_SIZE || box.height < MIN_FACE_SIZE) {
                     faceDetected = false;
                     currentDetection = null;
+                    if (faceIndicator) faceIndicator.classList.remove('show');
                     updateStatus("Move closer to the camera.");
                     
                     // FIX: Do NOT reset isRecognized or disable button
@@ -370,6 +455,7 @@
 
                 faceDetected = true;
                 currentDetection = detection;
+                if (faceIndicator) faceIndicator.classList.add('show');
 
                 // ============================================================
                 // Check if this is the registered person
@@ -438,6 +524,7 @@
                     isRecognized = true;
                     verifyBtn.disabled = false;
                     updateStatus("✅ Registered person recognized. Ready to verify.");
+                    // Loop will clear itself on the next tick (isRecognized check above)
                 } else if (!isRecognized) {
                     // Not recognized yet - face doesn't match
                     verifyBtn.disabled = true;

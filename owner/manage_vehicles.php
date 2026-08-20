@@ -19,11 +19,6 @@ if (function_exists('enforce_owner_access')) {
 }
 
 // Handle make available request
-// NOTE: This is the ONLY place a vehicle should be allowed to transition
-// back to 'available'. make_vehicle_available() (in owner_logic.php)
-// verifies vehicle ownership and blocks the change if there are active
-// bookings. Renters must never be able to trigger this — record.php's
-// return_car() only ever updates bookings.status, never vehicles.availability_status.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['make_available'], $_POST['vehicle_id'])) {
     $vehicle_id = (int) $_POST['vehicle_id'];
     $result = make_vehicle_available($pdo, $owner['id'], $vehicle_id);
@@ -43,7 +38,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_maintenance'], $_
     $vehicle = $stmt->fetch(PDO::FETCH_ASSOC);
     
     if ($vehicle) {
-        // Check if vehicle has any active bookings (pending or approved)
         $stmt = $pdo->prepare("SELECT COUNT(*) FROM bookings WHERE vehicle_id = ? AND status IN ('pending', 'approved')");
         $stmt->execute([$vehicle_id]);
         $active_bookings = (int) $stmt->fetchColumn();
@@ -61,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_maintenance'], $_
     }
 }
 
-// Handle remove maintenance request (make vehicle available again)
+// Handle remove maintenance request
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['remove_maintenance'], $_POST['vehicle_id'])) {
     $vehicle_id = (int) $_POST['vehicle_id'];
     $stmt = $pdo->prepare("SELECT id, availability_status FROM vehicles WHERE id = ? AND owner_id = ? AND is_deleted = 0");
@@ -93,24 +87,28 @@ if ($ajax && ($_GET['section'] ?? '') === 'vehicle-list') {
             echo '<td data-label="Availability"><span class="status-badge ' . htmlspecialchars(status_badge_class($vehicle['availability_status'])) . '">' . htmlspecialchars(status_label($vehicle['availability_status'])) . '</span></td>';
             echo '<td data-label="Approval"><span class="status-badge ' . htmlspecialchars(approval_status_badge_class($vehicle['approval_status'])) . '">' . htmlspecialchars(approval_status_label($vehicle['approval_status'])) . '</span></td>';
             echo '<td data-label="Actions" class="cell-actions"><div class="action-group">';
-            if ($vehicle['availability_status'] === 'available') {
-                echo '<form method="POST" onsubmit="return confirm(\'Set this vehicle to maintenance?\');">';
-                echo '<input type="hidden" name="vehicle_id" value="' . (int) $vehicle['id'] . '">';
-                echo '<button type="submit" name="set_maintenance" class="action-btn-small" style="background:#ffc107; color:#111;">Set Maintenance</button>';
-                echo '</form>';
-            }
-            if ($vehicle['availability_status'] === 'rented') {
-                echo '<form method="POST" onsubmit="return confirm(\'Make this vehicle available again?\');">';
-                echo '<input type="hidden" name="vehicle_id" value="' . (int) $vehicle['id'] . '">';
-                echo '<button type="submit" name="make_available" class="action-btn-small approve">Make Available</button>';
-                echo '</form>';
-            }
+            
+            // ============================================================
+            // ALWAYS SHOW BOTH BUTTONS: Make Available + Set Maintenance
+            // ============================================================
+            echo '<form method="POST" onsubmit="return confirm(\'Make this vehicle available again?\');">';
+            echo '<input type="hidden" name="vehicle_id" value="' . (int) $vehicle['id'] . '">';
+            echo '<button type="submit" name="make_available" class="action-btn-small approve">Make Available</button>';
+            echo '</form>';
+            
+            echo '<form method="POST" onsubmit="return confirm(\'Set this vehicle to maintenance?\');">';
+            echo '<input type="hidden" name="vehicle_id" value="' . (int) $vehicle['id'] . '">';
+            echo '<button type="submit" name="set_maintenance" class="action-btn-small" style="background:#ffc107; color:#111;">Set Maintenance</button>';
+            echo '</form>';
+            
+            // Keep "Remove Maintenance" only if currently in maintenance
             if ($vehicle['availability_status'] === 'maintenance') {
                 echo '<form method="POST" onsubmit="return confirm(\'Remove maintenance and make this vehicle available in the market?\');">';
                 echo '<input type="hidden" name="vehicle_id" value="' . (int) $vehicle['id'] . '">';
                 echo '<button type="submit" name="remove_maintenance" class="action-btn-small approve">Remove Maintenance</button>';
                 echo '</form>';
             }
+            
             echo '</div></td>';
             echo '</tr>';
         }
@@ -194,18 +192,15 @@ $error = $error ?? '';
                     <td data-label="Approval"><span class="status-badge <?php echo htmlspecialchars(approval_status_badge_class($vehicle['approval_status'])); ?>"><?php echo htmlspecialchars(approval_status_label($vehicle['approval_status'])); ?></span></td>
                     <td data-label="Actions" class="cell-actions">
                       <div class="action-group">
-                        <?php if ($vehicle['availability_status'] === 'available') : ?>
-                          <form method="POST" onsubmit="return confirm('Set this vehicle to maintenance?');">
-                            <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">
-                            <button type="submit" name="set_maintenance" class="action-btn-small" style="background:#ffc107; color:#111;">Set Maintenance</button>
-                          </form>
-                        <?php endif; ?>
-                        <?php if ($vehicle['availability_status'] === 'rented') : ?>
-                          <form method="POST" onsubmit="return confirm('Make this vehicle available again?');">
-                            <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">
-                            <button type="submit" name="make_available" class="action-btn-small approve">Make Available</button>
-                          </form>
-                        <?php endif; ?>
+                        <!-- ALWAYS SHOW BOTH BUTTONS -->
+                        <form method="POST" onsubmit="return confirm('Make this vehicle available again?');">
+                          <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">
+                          <button type="submit" name="make_available" class="action-btn-small approve">Make Available</button>
+                        </form>
+                        <form method="POST" onsubmit="return confirm('Set this vehicle to maintenance?');">
+                          <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">
+                          <button type="submit" name="set_maintenance" class="action-btn-small" style="background:#ffc107; color:#111;">Set Maintenance</button>
+                        </form>
                         <?php if ($vehicle['availability_status'] === 'maintenance') : ?>
                           <form method="POST" onsubmit="return confirm('Remove maintenance and make this vehicle available in the market?');">
                             <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">
@@ -220,15 +215,9 @@ $error = $error ?? '';
             </table>
           </div>
 
-          <!-- ============================================
-               MOBILE VEHICLE CARDS
-               Same $vehicles data as the table above, card-
-               per-vehicle for phones (same .only-desktop/
-               .only-mobile pattern as booking_requests.php).
-               NOTE: like that page, this block renders once
-               on load and is not part of the 7s live-refresh
-               - only the desktop table auto-refreshes.
-          ============================================ -->
+          <!-- ============================================ -->
+          <!-- MOBILE VEHICLE CARDS                          -->
+          <!-- ============================================ -->
           <div class="vehicle-list-cards only-mobile">
             <?php foreach ($vehicles as $vehicle) : ?>
               <div class="vehicle-list-card">
@@ -252,18 +241,15 @@ $error = $error ?? '';
                   </div>
                 </div>
                 <div class="vehicle-list-card-actions">
-                  <?php if ($vehicle['availability_status'] === 'available') : ?>
-                    <form method="POST" onsubmit="return confirm('Set this vehicle to maintenance?');">
-                      <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">
-                      <button type="submit" name="set_maintenance" class="action-btn-small" style="background:#ffc107; color:#111;">Set Maintenance</button>
-                    </form>
-                  <?php endif; ?>
-                  <?php if ($vehicle['availability_status'] === 'rented') : ?>
-                    <form method="POST" onsubmit="return confirm('Make this vehicle available again?');">
-                      <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">
-                      <button type="submit" name="make_available" class="action-btn-small approve">Make Available</button>
-                    </form>
-                  <?php endif; ?>
+                  <!-- ALWAYS SHOW BOTH BUTTONS -->
+                  <form method="POST" onsubmit="return confirm('Make this vehicle available again?');">
+                    <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">
+                    <button type="submit" name="make_available" class="action-btn-small approve">Make Available</button>
+                  </form>
+                  <form method="POST" onsubmit="return confirm('Set this vehicle to maintenance?');">
+                    <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">
+                    <button type="submit" name="set_maintenance" class="action-btn-small" style="background:#ffc107; color:#111;">Set Maintenance</button>
+                  </form>
                   <?php if ($vehicle['availability_status'] === 'maintenance') : ?>
                     <form method="POST" onsubmit="return confirm('Remove maintenance and make this vehicle available in the market?');">
                       <input type="hidden" name="vehicle_id" value="<?php echo (int) $vehicle['id']; ?>">

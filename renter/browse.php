@@ -180,7 +180,12 @@ function renderCarCard($car, $user_id, $conn, $account_state) {
     $hasCompletedBooking = false;
     $hasReviewed = false;
     $hasActiveBooking = false;
+
     if (!$account_state['restricted']) {
+        $stmt = $conn->prepare("SELECT id FROM bookings WHERE renter_id = ? AND vehicle_id = ? AND status IN ('pending', 'pending_location', 'approved') LIMIT 1");
+        $stmt->execute([$user_id, $car['id']]);
+        $hasActiveBooking = (bool) $stmt->fetch();
+
         $stmt = $conn->prepare("SELECT id FROM bookings WHERE renter_id = ? AND vehicle_id = ? AND status = 'completed' LIMIT 1");
         $stmt->execute([$user_id, $car['id']]);
         $hasCompletedBooking = (bool) $stmt->fetch();
@@ -188,13 +193,6 @@ function renderCarCard($car, $user_id, $conn, $account_state) {
         $stmt = $conn->prepare("SELECT id FROM reviews WHERE renter_id = ? AND vehicle_id = ? LIMIT 1");
         $stmt->execute([$user_id, $car['id']]);
         $hasReviewed = (bool) $stmt->fetch();
-
-        // FIXED: renter already has an unfinished booking on this vehicle
-        // (still pending GPS/admin approval or currently rented) - hide
-        // "Book Now" so they can't book the same car twice
-        $stmt = $conn->prepare("SELECT id FROM bookings WHERE renter_id = ? AND vehicle_id = ? AND status IN ('pending_location', 'pending', 'approved', 'return_requested') LIMIT 1");
-        $stmt->execute([$user_id, $car['id']]);
-        $hasActiveBooking = (bool) $stmt->fetch();
     }
     
     ?>
@@ -234,19 +232,20 @@ function renderCarCard($car, $user_id, $conn, $account_state) {
             <div class="action-buttons">
                 <a href="vehicle_details.php?car_id=<?= (int) $car['id'] ?>" class="book-btn">View Details</a><br><br>
                 <a href="comment_rate.php?vehicle_id=<?= (int) $car['id'] ?>" class="book-btn" style="background:#17a2b8;">Comment & Rate</a><br><br>
-                <?php if ($account_state['restricted']): ?>
+                <?php 
+                if ($hasActiveBooking): 
+                ?>
+                    <button class="book-btn disabled" disabled>Already Booked</button>
+                <?php elseif ($account_state['restricted']): ?>
                     <button class="book-btn disabled" disabled>
                         <?= $account_state['status'] === 'disapproved' ? 'Access Restricted' : 'Approval Pending' ?>
                     </button>
                 <?php elseif ($approval === 'approved'): ?>
-                    <?php if ($hasActiveBooking): ?>
-                        <!-- FIXED: hide Book Now once this renter already has an active booking on this car -->
-                        <button class="book-btn disabled" disabled>Already Booked</button>
-                    <?php elseif ($status === 'available'): ?>
-                        <!-- FIXED: Book Now only shows when vehicle is available -->
+                    <?php if ($status === 'available'): ?>
+                        <!-- ============================================================
+                        FIXED: Book Now button now redirects directly to book.php
+                        ============================================================ -->
                         <a href="book.php?car_id=<?= (int) $car['id'] ?>" class="book-btn book-now-btn">Book Now</a>
-                    <?php else: ?>
-                        <button class="book-btn disabled" disabled>Not Available</button>
                     <?php endif; ?>
                     <?php if ($hasCompletedBooking && !$hasReviewed): ?>
                         <a href="comment_rate.php?vehicle_id=<?= (int) $car['id'] ?>" class="book-btn" style="background:#17a2b8;">
@@ -455,7 +454,7 @@ function build_vehicle_image_path($value): string {
     });
 
     // ============================================================
-    // AUTO-REFRESH VEHICLE LIST
+    // AUTO-REFRESH VEHICLE LIST (every 30s)
     // ============================================================
     function refreshVehicleList() {
         if (!carContainer) return;
@@ -466,6 +465,7 @@ function build_vehicle_image_path($value): string {
             .then(function(html) {
                 if (html.trim().length > 0) {
                     carContainer.innerHTML = html;
+                    // Re‑apply image lazy loading
                     document.querySelectorAll('.car-img').forEach(function(img) {
                         img.classList.add('loading');
                         if (img.complete) {
@@ -475,7 +475,6 @@ function build_vehicle_image_path($value): string {
                             img.addEventListener('error', function() { handleImageError(img); });
                         }
                     });
-                    // Re-bind any dynamic elements if needed
                 }
             })
             .catch(function(error) { console.log('Auto-refresh failed:', error); });
@@ -526,6 +525,5 @@ function build_vehicle_image_path($value): string {
 })();
 </script>
 <script src="../bootstrap-5.3.8-dist/js/bootstrap.bundle.min.js"></script>
-
 </body>
 </html>

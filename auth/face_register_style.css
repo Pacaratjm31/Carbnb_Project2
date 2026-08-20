@@ -287,6 +287,96 @@ to{
 }
 
 /* =========================
+LOADING OVERLAY (was missing - #loadingOverlay/.hidden were
+referenced by face_register.php and script_capture.js but never
+defined here, so the "Loading face detection models..." text
+could never actually be hidden by JS, regardless of load state)
+========================= */
+
+#loadingOverlay{
+
+position:absolute;
+top:0;
+left:0;
+width:100%;
+height:100%;
+
+display:flex;
+flex-direction:column;
+align-items:center;
+justify-content:center;
+gap:12px;
+
+background:rgba(0,0,0,.6);
+color:#fff;
+text-align:center;
+padding:20px;
+
+z-index:5;
+
+transition:opacity .3s ease;
+
+}
+
+#loadingOverlay.hidden{
+
+opacity:0;
+pointer-events:none;
+display:none;
+
+}
+
+.spinner{
+
+width:36px;
+height:36px;
+border:4px solid rgba(255,255,255,.25);
+border-top-color:#00bfff;
+border-radius:50%;
+animation:spin .8s linear infinite;
+
+}
+
+@keyframes spin{
+to{ transform:rotate(360deg); }
+}
+
+/* =========================
+FACE DETECTED INDICATOR (was missing - .show was toggled by
+script_capture.js but never defined, so this stayed either
+always-visible or always-hidden regardless of actual detection)
+========================= */
+
+.face-detected-indicator{
+
+position:absolute;
+top:12px;
+right:12px;
+
+background:rgba(76,175,80,.9);
+color:#fff;
+padding:6px 12px;
+border-radius:999px;
+font-size:13px;
+font-weight:600;
+
+opacity:0;
+transform:translateY(-6px);
+pointer-events:none;
+transition:opacity .25s ease, transform .25s ease;
+
+z-index:5;
+
+}
+
+.face-detected-indicator.show{
+
+opacity:1;
+transform:translateY(0);
+
+}
+
+/* =========================
 MOBILE
 ========================= */
 

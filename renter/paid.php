@@ -692,5 +692,47 @@ if ($ajax && ($_GET['section'] ?? '') === 'payment-status') {
     })();
     </script>
 
+    <!-- ============================================ -->
+    <!-- GPS LOCATION TRACKING - RESUME ACROSS PAGES  -->
+    <!-- ============================================ -->
+    <!-- book.php starts tracking via GPSTracker.start(), which -->
+    <!-- persists its state to sessionStorage. That in-memory watch -->
+    <!-- dies on every full page navigation (browsers destroy the -->
+    <!-- JS context on load), so each page the renter can land on -->
+    <!-- during an active booking must explicitly pick tracking -->
+    <!-- back up. This is that pickup for paid.php. -->
+    <script src="../js/gps_tracker.js?v=<?= time() ?>"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var bookingStatus = <?= json_encode($data['status']) ?>;
+        var bookingId = <?= (int) $booking_id ?>;
+
+        // Booking already finished (e.g. renter revisits an old payment
+        // link) - make sure nothing is left running, but don't start it.
+        if (bookingStatus === 'completed') {
+            if (window.GPSTracker) {
+                window.GPSTracker.stop();
+            }
+            return;
+        }
+
+        if (!window.GPSTracker) {
+            console.warn('[paid.php] gps_tracker.js failed to load - location will not be tracked here.');
+            return;
+        }
+
+        var resumed = window.GPSTracker.resume();
+        if (!resumed) {
+            // No sessionStorage state (fresh tab, tab was fully closed and
+            // reopened, etc.) - restart tracking directly using the real
+            // booking_id PHP already has for this page.
+            window.GPSTracker.start(bookingId);
+            console.log('[paid.php] GPS tracking started fresh for booking', bookingId);
+        } else {
+            console.log('[paid.php] GPS tracking resumed for booking', bookingId);
+        }
+    });
+    </script>
+
 </body>
 </html>

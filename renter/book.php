@@ -76,7 +76,6 @@ if (!$car) {
     die('Car not found.');
 }
 
-// Check if vehicle is approved
 if (($car['approval_status'] ?? 'pending') !== 'approved') {
     die('This vehicle is not yet approved by admin. Please check back later.');
 }
@@ -115,9 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    // location_granted is flow control only
     $locationGranted = isset($_POST['location_granted']) && $_POST['location_granted'] === '1';
-    
     if (!$locationGranted) {
         header('Content-Type: application/json');
         echo json_encode([
@@ -155,6 +152,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    $latitude = isset($_POST['latitude']) && is_numeric($_POST['latitude']) ? (float) $_POST['latitude'] : null;
+    $longitude = isset($_POST['longitude']) && is_numeric($_POST['longitude']) ? (float) $_POST['longitude'] : null;
+    $accuracy = isset($_POST['accuracy']) && is_numeric($_POST['accuracy']) ? (float) $_POST['accuracy'] : 0;
+
     try {
         $conn->beginTransaction();
         
@@ -174,46 +175,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($existingBooking) {
             $booking_id = (int) $existingBooking['id'];
-            $conn->commit();
-            header('Content-Type: application/json');
-            echo json_encode([
-                'success' => true,
-                'booking_id' => $booking_id,
-                'redirect' => 'paid.php?booking_id=' . $booking_id
-            ]);
-            exit;
+        } else {
+            // Conflict check for OTHER users
+            $check = $conn->prepare("
+                SELECT COUNT(*) 
+                FROM bookings 
+                WHERE vehicle_id = ? 
+                AND status IN ('pending', 'approved', 'pending_location') 
+                AND start_date <= ? 
+                AND end_date >= ?
+            ");
+            $check->execute([$car_id, $end, $start]);
+
+            if ($check->fetchColumn() > 0) {
+                $conn->rollBack();
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'This car is already booked for the selected dates.'
+                ]);
+                exit;
+            }
+
+            $diff = strtotime($end) - strtotime($start);
+            $days = floor($diff / (60 * 60 * 24)) + 1;
+            $days = max(1, $days);
+            $total_price = $days * (float) $car['rate'];
+
+            $stmt = $conn->prepare("INSERT INTO bookings (renter_id, vehicle_id, start_date, end_date, total_days, total_price, status) VALUES (?, ?, ?, ?, ?, ?, 'pending_location')");
+            $stmt->execute([$user_id, $car_id, $start, $end, $days, $total_price]);
+            $booking_id = (int) $conn->lastInsertId();
         }
 
-        // Conflict check for OTHER users
-        $check = $conn->prepare("
-            SELECT COUNT(*) 
-            FROM bookings 
-            WHERE vehicle_id = ? 
-            AND status IN ('pending', 'approved', 'pending_location') 
-            AND start_date <= ? 
-            AND end_date >= ?
-        ");
-        $check->execute([$car_id, $end, $start]);
-
-        if ($check->fetchColumn() > 0) {
-            $conn->rollBack();
-            header('Content-Type: application/json');
-            echo json_encode([
-                'success' => false,
-                'message' => 'This car is already booked for the selected dates.'
-            ]);
-            exit;
+        // Save GPS location atomically within the same transaction
+        if ($latitude !== null && $longitude !== null) {
+            $recorded_at = date('Y-m-d H:i:s');
+            $locStmt = $conn->prepare("
+                INSERT INTO location_tracker (user_id, booking_id, latitude, longitude, accuracy, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+            $locStmt->execute([$user_id, $booking_id, $latitude, $longitude, $accuracy, $recorded_at]);
         }
 
-        $diff = strtotime($end) - strtotime($start);
-        $days = floor($diff / (60 * 60 * 24)) + 1;
-        $days = max(1, $days);
-        $total_price = $days * (float) $car['rate'];
-
-        $stmt = $conn->prepare("INSERT INTO bookings (renter_id, vehicle_id, start_date, end_date, total_days, total_price, status) VALUES (?, ?, ?, ?, ?, ?, 'pending_location')");
-        $stmt->execute([$user_id, $car_id, $start, $end, $days, $total_price]);
-
-        $booking_id = $conn->lastInsertId();
         $conn->commit();
         
         header('Content-Type: application/json');
@@ -435,6 +438,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <form method="POST" class="booking-form" id="bookingForm">
         <?= form_token_input('book_vehicle') ?>
+        <input type="hidden" name="latitude" id="gps_latitude" value="">
+        <input type="hidden" name="longitude" id="gps_longitude" value="">
+        <input type="hidden" name="accuracy" id="gps_accuracy" value="">
 
         <label>Start Date</label>
         <input type="text" name="start" id="start_date" required>
@@ -488,22 +494,35 @@ const priceDisplay = document.getElementById('total-price');
 const rate = parseFloat("<?= $car['rate'] ?>") || 0;
 const today = '<?= date('Y-m-d') ?>';
 
-const startPicker = flatpickr(startInput, {
-    dateFormat: 'Y-m-d',
-    minDate: today,
-    onChange: function(selectedDates, dateStr) {
-        if (selectedDates[0]) {
-            endPicker.set('minDate', dateStr);
-        }
-        updatePrice();
+let startPicker = null;
+let endPicker = null;
+try {
+    if (typeof flatpickr === 'undefined') {
+        throw new Error('flatpickr library failed to load (CDN may be blocked)');
     }
-});
+    startPicker = flatpickr(startInput, {
+        dateFormat: 'Y-m-d',
+        minDate: today,
+        onChange: function(selectedDates, dateStr) {
+            if (selectedDates[0]) {
+                endPicker.set('minDate', dateStr);
+            }
+            updatePrice();
+        }
+    });
 
-const endPicker = flatpickr(endInput, {
-    dateFormat: 'Y-m-d',
-    minDate: today,
-    onChange: updatePrice
-});
+    endPicker = flatpickr(endInput, {
+        dateFormat: 'Y-m-d',
+        minDate: today,
+        onChange: updatePrice
+    });
+} catch (err) {
+    console.error('⚠️ Date picker failed to load, falling back to plain text inputs:', err.message);
+    startInput.placeholder = 'YYYY-MM-DD';
+    endInput.placeholder = 'YYYY-MM-DD';
+    startInput.addEventListener('change', updatePrice);
+    endInput.addEventListener('change', updatePrice);
+}
 
 function updatePrice() {
     if (startInput.value && endInput.value) {
@@ -539,9 +558,12 @@ let isProcessing = false;
 let gpsPosition = null;
 let isGpsAcquired = false;
 
-// ============================================================
-// SET MODAL STATUS
-// ============================================================
+function isMobileDevice() {
+    var uaCheck = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(navigator.userAgent);
+    var widthCheck = window.innerWidth <= 768;
+    return uaCheck || widthCheck;
+}
+
 function setModalStatus(message, type) {
     modalStatus.textContent = message;
     modalStatus.className = 'permission-status';
@@ -551,74 +573,7 @@ function setModalStatus(message, type) {
 }
 
 // ============================================================
-// GET BASE URL
-// ============================================================
-function getBaseUrl() {
-    return window.location.protocol + '//' + window.location.host;
-}
-
-// ============================================================
-// GET API PATH
-// ============================================================
-function getApiPath() {
-    var path = window.location.pathname;
-    var basePath = path.substring(0, path.lastIndexOf('/'));
-    var projectPath = basePath.substring(0, basePath.lastIndexOf('/') + 1);
-    if (projectPath === '' || projectPath === '/') {
-        projectPath = '/';
-    }
-    return projectPath;
-}
-
-// ============================================================
-// SEND LOCATION TO SERVER - ONLY CALLED WITH REAL booking_id
-// ============================================================
-function sendLocationToServer(position, bookingId) {
-    if (!bookingId || bookingId < 1) {
-        console.error('❌ sendLocationToServer called with invalid booking_id:', bookingId);
-        return Promise.reject(new Error('Invalid booking_id for location tracking'));
-    }
-
-    var latitude = position.coords.latitude;
-    var longitude = position.coords.longitude;
-    var accuracy = position.coords.accuracy || 0;
-    var recorded_at = new Date().toISOString().slice(0,19).replace("T"," ");
-
-    console.log('📍 Sending GPS with REAL booking_id:', bookingId);
-
-    var formData = new URLSearchParams();
-    formData.append('latitude', latitude);
-    formData.append('longitude', longitude);
-    formData.append('accuracy', accuracy);
-    formData.append('recorded_at', recorded_at);
-    formData.append('booking_id', bookingId);
-
-    var projectPath = getApiPath();
-    var apiUrl = getBaseUrl() + projectPath + 'admin/location_tracker.php';
-
-    return fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formData.toString()
-    })
-    .then(function(response) {
-        if (!response.ok) {
-            throw new Error('HTTP ' + response.status + ': ' + response.statusText);
-        }
-        return response.json();
-    })
-    .then(function(data) {
-        if (!data.success) {
-            throw new Error(data.message || 'Server error');
-        }
-        return data;
-    });
-}
-
-// ============================================================
-// GET GPS POSITION - ONLY FOR PERMISSION, DOES NOT SEND TO SERVER
+// GET GPS POSITION – populates hidden fields
 // ============================================================
 function getGpsPosition() {
     return new Promise(function(resolve, reject) {
@@ -643,6 +598,9 @@ function getGpsPosition() {
             function(position) {
                 clearTimeout(gpsTimeout);
                 console.log('✅ GPS acquired:', position.coords.latitude, position.coords.longitude);
+                document.getElementById('gps_latitude').value = position.coords.latitude;
+                document.getElementById('gps_longitude').value = position.coords.longitude;
+                document.getElementById('gps_accuracy').value = position.coords.accuracy || 0;
                 setModalStatus('📍 GPS acquired! Creating booking...', 'loading');
                 resolve(position);
             },
@@ -681,11 +639,9 @@ function getGpsPosition() {
 }
 
 // ============================================================
-// SUBMIT BOOKING FORM AFTER GPS SUCCESS
+// SUBMIT BOOKING FORM – includes GPS coords automatically
 // ============================================================
-function submitBookingForm(position) {
-    gpsPosition = position;
-
+function submitBookingForm() {
     var formData = new FormData(bookingForm);
     formData.append('location_granted', '1');
 
@@ -702,69 +658,59 @@ function submitBookingForm(position) {
     .then(function(data) {
         if (data.success && data.booking_id) {
             var realBookingId = data.booking_id;
-            console.log('✅ Booking created! REAL ID:', realBookingId);
+            console.log('✅ Booking created with ID:', realBookingId);
             
-            setModalStatus('📍 Saving location with booking #' + realBookingId + '...', 'loading');
+            // Start GPS tracker immediately
+            if (window.GPSTracker) {
+                // Ensure any previous tracker is stopped
+                window.GPSTracker.stop();
+                // Start fresh
+                window.GPSTracker.start(realBookingId);
+                console.log('✅ GPS tracker started with booking_id:', realBookingId);
+            } else {
+                console.warn('⚠️ GPSTracker not available. Tracking will not continue.');
+            }
             
-            sendLocationToServer(gpsPosition, realBookingId)
-                .then(function(locationData) {
-                    console.log('✅ First location saved with REAL booking_id:', realBookingId);
-                    
-                    // Start GPS tracker using the shared GPSTracker
-                    if (window.GPSTracker) {
-                        window.GPSTracker.start(realBookingId);
-                        console.log('✅ GPS tracker started with booking_id:', realBookingId);
-                    } else {
-                        console.warn('⚠️ GPSTracker not available. Tracking will not continue.');
-                    }
-                    
-                    setModalStatus('✅ GPS tracking active! Ready to proceed.', 'success');
-                    
-                    // Hide Allow/Deny buttons
-                    allowBtn.style.display = 'none';
-                    denyBtn.style.display = 'none';
-                    
-                    // Show Proceed to Payment button
-                    var proceedBtn = document.getElementById('proceedToPaymentBtn');
-                    if (!proceedBtn) {
-                        proceedBtn = document.createElement('button');
-                        proceedBtn.id = 'proceedToPaymentBtn';
-                        proceedBtn.className = 'btn-allow';
-                        proceedBtn.textContent = 'Proceed to Payment →';
-                        proceedBtn.style.width = '100%';
-                        proceedBtn.style.marginTop = '10px';
-                        
-                        var modalActions = document.querySelector('.modal-actions');
-                        if (modalActions) {
-                            modalActions.appendChild(proceedBtn);
-                        }
-                    }
-                    proceedBtn.style.display = 'block';
-                    
-                    var newProceedBtn = proceedBtn.cloneNode(true);
-                    proceedBtn.parentNode.replaceChild(newProceedBtn, proceedBtn);
-                    
-                    newProceedBtn.addEventListener('click', function() {
-                        window.location.href = data.redirect;
-                    });
-                })
-                .catch(function(err) {
-                    console.error('❌ Failed to save location:', err.message);
-                    
-                    setModalStatus('❌ Failed to save GPS location: ' + err.message + '. Please try again.', 'error');
-                    
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = 'Proceed to Payment';
-                    
-                    isProcessing = false;
-                    isGpsAcquired = false;
-                    gpsPosition = null;
-                    
-                    allowBtn.disabled = false;
-                    allowBtn.textContent = 'Try Again';
-                });
+            setModalStatus('✅ Booking confirmed! GPS tracking active.', 'success');
+            
+            allowBtn.style.display = 'none';
+            denyBtn.style.display = 'none';
+            
+            var proceedBtn = document.getElementById('proceedToPaymentBtn');
+            if (!proceedBtn) {
+                proceedBtn = document.createElement('button');
+                proceedBtn.id = 'proceedToPaymentBtn';
+                proceedBtn.className = 'btn-allow';
+                proceedBtn.textContent = 'Proceed to Payment →';
+                proceedBtn.style.width = '100%';
+                proceedBtn.style.marginTop = '10px';
+                
+                var modalActions = document.querySelector('.modal-actions');
+                if (modalActions) {
+                    modalActions.appendChild(proceedBtn);
+                }
+            }
+            proceedBtn.style.display = 'block';
+            
+            var newProceedBtn = proceedBtn.cloneNode(true);
+            proceedBtn.parentNode.replaceChild(newProceedBtn, proceedBtn);
+            
+            newProceedBtn.addEventListener('click', function() {
+                window.location.href = data.redirect;
+            });
+            
         } else {
-            setModalStatus('❌ ' + (data.message || 'Booking failed'), 'error');
+            var isTokenError = /invalid or expired/i.test(data.message || '');
+            if (isTokenError) {
+                setModalStatus('❌ Your form session expired. Reloading for a fresh session...', 'error');
+                setTimeout(function() {
+                    window.location.reload();
+                }, 1800);
+            } else {
+                setModalStatus('❌ ' + (data.message || 'Booking failed'), 'error');
+                allowBtn.disabled = false;
+                allowBtn.textContent = 'Try Again';
+            }
             submitBtn.disabled = false;
             submitBtn.textContent = 'Proceed to Payment';
             isProcessing = false;
@@ -780,6 +726,38 @@ function submitBookingForm(position) {
         isProcessing = false;
         isGpsAcquired = false;
         gpsPosition = null;
+    });
+}
+
+// ============================================================
+// DESKTOP BOOKING – no GPS, no modal
+// ============================================================
+function submitBookingFormDesktop() {
+    var formData = new FormData(bookingForm);
+    formData.append('location_granted', '1');
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating booking...';
+
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+        if (data.success && data.redirect) {
+            window.location.href = data.redirect;
+        } else {
+            alert(data.message || 'Booking failed. Please try again.');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Proceed to Payment';
+        }
+    })
+    .catch(function(error) {
+        console.error('Booking submission error:', error);
+        alert('Booking failed: ' + error.message);
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Proceed to Payment';
     });
 }
 
@@ -809,6 +787,13 @@ bookingForm.addEventListener('submit', function(e) {
         return;
     }
     
+    // Desktop: skip GPS
+    if (!isMobileDevice()) {
+        submitBookingFormDesktop();
+        return;
+    }
+    
+    // Mobile: show modal
     isProcessing = false;
     allowBtn.disabled = false;
     allowBtn.textContent = 'Allow Location';
@@ -828,7 +813,7 @@ allowBtn.onclick = function() {
             isGpsAcquired = true;
             gpsPosition = position;
             setModalStatus('✅ GPS acquired! Creating booking...', 'success');
-            submitBookingForm(position);
+            submitBookingForm();
         })
         .catch(function(error) {
             console.error('GPS error:', error.message);
@@ -850,7 +835,7 @@ denyBtn.onclick = function() {
 </script>
 
 <!-- ============================================================
-     Shared GPS Tracker
+     GPS TRACKER - PATH IS CORRECT: ../js/gps_tracker.js
      ============================================================ -->
 <script src="../js/gps_tracker.js?v=<?= time() ?>"></script>
 
