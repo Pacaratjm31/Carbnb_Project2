@@ -183,7 +183,6 @@ if ($isPost && $action === 'mark_read') {
 
 // ============================================================
 // GET: Admin fetches locations for ALL active bookings
-// FIXED: Removed start_date restriction to show future bookings.
 // ============================================================
 if ($ajax && ($_GET['section'] ?? '') === 'locations') {
     header('Content-Type: application/json');
@@ -226,7 +225,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'locations') {
             WHERE u.role = 'renter'
             AND u.is_deleted = 0
             AND b.status IN ('pending_location', 'pending', 'approved')
-            AND b.end_date >= CURDATE()        -- Only bookings that haven't ended
+            AND b.end_date >= CURDATE()
             ORDER BY u.full_name ASC
         ");
         $stmt->execute();
@@ -235,13 +234,6 @@ if ($ajax && ($_GET['section'] ?? '') === 'locations') {
         $points = [];
         foreach ($renters as $renter) {
             if ($renter['latitude'] !== null && $renter['longitude'] !== null) {
-                $isRecent = false;
-                if ($renter['recorded_at']) {
-                    $lastUpdate = strtotime($renter['recorded_at']);
-                    $secondsAgo = time() - $lastUpdate;
-                    $isRecent = ($secondsAgo <= LOCATION_ACTIVE_THRESHOLD_SECONDS);
-                }
-                
                 $points[] = [
                     'user_id' => $renter['user_id'],
                     'booking_id' => $renter['booking_id'],
@@ -249,9 +241,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'locations') {
                     'latitude' => (float) $renter['latitude'],
                     'longitude' => (float) $renter['longitude'],
                     'accuracy' => (float) ($renter['accuracy'] ?? 0),
-                    'recorded_at' => $renter['recorded_at'],
-                    'is_recent' => $isRecent,
-                    'status' => $isRecent ? 'active' : 'inactive',
+                    'recorded_at' => $renter['recorded_at']
                 ];
             }
         }
@@ -261,8 +251,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'locations') {
             'points' => $points,
             'count' => count($points),
             'message' => count($points) . ' active renter(s) found',
-            'server_time' => date('Y-m-d H:i:s'),
-            'threshold_seconds' => LOCATION_ACTIVE_THRESHOLD_SECONDS
+            'server_time' => date('Y-m-d H:i:s')
         ]);
         
     } catch (Exception $e) {
@@ -277,7 +266,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'locations') {
 }
 
 // ============================================================
-// GET: Debug endpoint
+// GET: Debug endpoint (optional)
 // ============================================================
 if ($ajax && ($_GET['section'] ?? '') === 'debug') {
     header('Content-Type: application/json');
@@ -371,7 +360,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
 }
 
 // ============================================================
-// HTML: Admin Map Page (unchanged UI)
+// HTML: Admin Map Page
 // ============================================================
 ?>
 <!DOCTYPE html>
@@ -410,10 +399,18 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       background: rgba(255,255,255,0.05);
       border: 1px solid var(--border);
       color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
     }
     .tracker-status .count {
       color: var(--accent);
       font-weight: 700;
+    }
+    .tracker-status .timestamp {
+      font-size: 13px;
+      color: #6b7280;
     }
     .tracker-status.error {
       background: rgba(248,113,113,0.1);
@@ -460,6 +457,15 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     @media (max-width: 767px) {
       #tracker-map { height: 320px; }
     }
+
+    /* Diagnostic info */
+    #lastUpdateInfo {
+      font-size: 12px;
+      color: #6b7280;
+      background: #f3f4f6;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
   </style>
 </head>
 <body>
@@ -495,12 +501,12 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         <div>
           <h2>Live renter movement map</h2>
           <p>
-            Showing <strong>last known positions</strong> for all active renters. 
-            🟢 = recent (within <?= LOCATION_ACTIVE_THRESHOLD_SECONDS ?>s), 🟡 = stale (last known location).
+            Showing <strong>latest known positions</strong> for all active renters.  
+            Each renter has a distinct colour. <strong>Updates every 2 seconds</strong>.
           </p>
         </div>
         <div>
-          <span class="tracker-badge">🔄 Auto-refresh every 10 seconds</span>
+          <span class="tracker-badge">🔄 Auto-refresh every 2 seconds</span>
         </div>
       </section>
 
@@ -517,6 +523,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
           <div id="tracker-map"></div>
           <div id="trackerStatus" class="tracker-status">
             <span class="loading-spinner"></span> Loading latest positions...
+            <span id="lastUpdateInfo">No GPS data yet</span>
           </div>
         </div>
       </section>
@@ -531,12 +538,26 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     // ============================================================
     // CONFIGURATION
     // ============================================================
-    const REFRESH_INTERVAL = 10000;
+    const REFRESH_INTERVAL = 2000; // 2 seconds
     let map = null;
     let markers = [];
     let polylines = [];
     let refreshTimer = null;
     let isFirstLoad = true;
+    let lastUpdateTime = null;
+
+    // Predefined bright colours for different users
+    const USER_COLORS = [
+        '#e6194B', '#3cb44b', '#ffe119', '#4363d8', '#f58231', 
+        '#911eb4', '#42d4f4', '#f032e6', '#bfef45', '#fabed4',
+        '#469990', '#dcbeff', '#9A6324', '#fffac8', '#800000',
+        '#aaffc3', '#808000', '#ffd8b1', '#000075', '#a9a9a9'
+    ];
+
+    function getUserColor(userId) {
+        const hash = (userId * 2654435761) % USER_COLORS.length;
+        return USER_COLORS[hash];
+    }
 
     // ============================================================
     // DOM ELEMENTS
@@ -545,9 +566,10 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     const statusEl = document.getElementById('trackerStatus');
     const errorEl = document.getElementById('trackerError');
     const errorMsgEl = document.getElementById('errorMessage');
+    const lastUpdateInfo = document.getElementById('lastUpdateInfo');
 
     // ============================================================
-    // SIDEBAR TOGGLE
+    // SIDEBAR TOGGLE (unchanged)
     // ============================================================
     document.addEventListener('DOMContentLoaded', function () {
       const sidebar = document.querySelector('.sidebar');
@@ -629,16 +651,21 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       errorEl.classList.remove('show');
     }
 
-    function setStatus(message, type, count) {
+    function setStatus(message, type, count, timestamp) {
       statusEl.className = 'tracker-status';
       if (type === 'error') statusEl.classList.add('error');
       else if (type === 'success') statusEl.classList.add('success');
       
+      let html = '';
       if (count !== undefined && count > 0) {
-        statusEl.innerHTML = message.replace('{count}', '<span class="count">' + count + '</span>');
+        html = message.replace('{count}', '<span class="count">' + count + '</span>');
       } else {
-        statusEl.innerHTML = message;
+        html = message;
       }
+      if (timestamp) {
+        html += ' <span class="timestamp">⏱️ ' + timestamp + '</span>';
+      }
+      statusEl.innerHTML = html;
     }
 
     // ============================================================
@@ -673,23 +700,42 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     }
 
     // ============================================================
-    // RENDER POINTS - Shows all renters, green for recent, amber for stale
+    // RENDER POINTS – Always active, distinct colours, no stale state
     // ============================================================
-    function renderPoints(points) {
+    function renderPoints(points, serverTime) {
       if (!map) { if (!initMap()) return; }
       clearMarkers();
 
+      // Update diagnostic info
+      if (points && points.length > 0) {
+        var latest = points.reduce(function(a, b) {
+          return new Date(a.recorded_at) > new Date(b.recorded_at) ? a : b;
+        });
+        if (latest && latest.recorded_at) {
+          lastUpdateInfo.textContent = 'Latest GPS: ' + new Date(latest.recorded_at).toLocaleString();
+        } else {
+          lastUpdateInfo.textContent = 'No GPS data yet';
+        }
+      } else {
+        lastUpdateInfo.textContent = 'No GPS data yet';
+      }
+
       if (!points || points.length === 0) {
-        setStatus('📍 No active renters found with location data.', 'info');
+        setStatus('📍 No active renters found with location data.', 'info', 0, serverTime);
         hideError();
         return;
       }
 
+      // Group points by user_id
       const users = {};
       points.forEach(p => {
         const uid = p.user_id || 0;
         if (!users[uid]) {
-          users[uid] = { full_name: p.full_name || 'Renter', points: [] };
+          users[uid] = { 
+            full_name: p.full_name || 'Renter', 
+            points: [], 
+            color: getUserColor(uid) 
+          };
         }
         users[uid].points.push(p);
       });
@@ -706,32 +752,28 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         if (!coords.length) return;
 
         const last = u.points[u.points.length - 1];
-        const isRecent = last.is_recent === true;
-        
-        const color = isRecent ? '#22c55e' : '#f59e0b';
-        const radius = isRecent ? 9 : 6;
-        const dashArray = isRecent ? null : '5 5';
+        const color = u.color;
 
+        // Draw path if multiple points
         if (coords.length > 1) {
           const poly = L.polyline(coords, { color: color, weight: 2, opacity: 0.5 }).addTo(map);
           polylines.push(poly);
         }
 
+        // Marker at latest position
         const marker = L.circleMarker(
           [parseFloat(last.latitude), parseFloat(last.longitude)], 
           {
-            radius: radius,
+            radius: 8,
             fillColor: color,
             color: '#fff',
             weight: 2,
-            fillOpacity: 0.9,
-            dashArray: dashArray
+            fillOpacity: 0.9
           }
         ).addTo(map);
 
         const timeDisplay = last.recorded_at ? new Date(last.recorded_at).toLocaleString() : 'Unknown';
-        const statusText = isRecent ? '🟢 Active (recent)' : '🟡 Last known (stale)';
-        marker.bindPopup(`<strong>${u.full_name}</strong><br>${statusText}<br>Last update: ${timeDisplay}`);
+        marker.bindPopup(`<strong>${u.full_name}</strong><br>Last update: ${timeDisplay}`);
         markers.push(marker);
 
         coords.forEach(c => allBounds.push(c));
@@ -742,19 +784,12 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         try { map.fitBounds(allBounds, { padding: [50, 50] }); } catch(e) {}
       }
 
-      const recentCount = points.filter(p => p.is_recent === true).length;
-      const staleCount = points.length - recentCount;
-      
-      let statusMsg = `📍 Showing {count} renter(s) with last known positions.`;
-      if (recentCount > 0) statusMsg += ` 🟢 ${recentCount} recent`;
-      if (staleCount > 0) statusMsg += ` 🟡 ${staleCount} stale`;
-      
-      setStatus(statusMsg, 'success', userCount);
+      setStatus(`📍 Showing {count} renter(s) with last known positions.`, 'success', userCount, serverTime);
       hideError();
     }
 
     // ============================================================
-    // FETCH LOCATIONS
+    // FETCH LOCATIONS FROM SERVER
     // ============================================================
     function refreshLocations() {
       if (isFirstLoad) setStatus('🔄 Loading latest positions...', 'info');
@@ -771,7 +806,8 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         .then(function(data) {
           isFirstLoad = false;
           if (data.success) {
-            renderPoints(data.points || []);
+            const serverTime = data.server_time || new Date().toLocaleString();
+            renderPoints(data.points || [], serverTime);
           } else {
             showError(data.message || 'Unable to load location data.');
             setStatus('❌ ' + (data.message || 'Unable to load locations'), 'error');

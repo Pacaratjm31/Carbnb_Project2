@@ -2,7 +2,8 @@
  * ============================================================
  * GPS TRACKER - Cross-page continuous GPS tracking
  * 
- * UPDATED: More robust error handling and logging.
+ * FIXED: Simplified URL builder to always find admin/location_tracker.php
+ *        relative to the website root.
  * ============================================================
  */
 
@@ -21,35 +22,29 @@
     const STORAGE_KEY = 'carbnb_gps_tracking';
 
     // ============================================================
-    // PRIVATE: Build reliable API URL
+    // PRIVATE: Build reliable API URL (Fixed)
     // ============================================================
     function getApiUrl() {
         var protocol = window.location.protocol;
         var host = window.location.host;
         var pathname = window.location.pathname;
-        
-        var projectRoot = '/';
-        var pathParts = pathname.split('/').filter(function(p) { return p.length > 0; });
-        
-        if (pathParts.indexOf('renter') !== -1 || pathParts.indexOf('admin') !== -1) {
-            var projectIndex = 0;
-            for (var i = 0; i < pathParts.length; i++) {
-                if (pathParts[i] === 'renter' || pathParts[i] === 'admin') {
-                    projectIndex = i;
-                    break;
-                }
-            }
-            if (projectIndex > 0) {
-                projectRoot = '/' + pathParts.slice(0, projectIndex).join('/') + '/';
-            } else {
-                projectRoot = '/';
-            }
+
+        // Split path into parts
+        var parts = pathname.split('/').filter(function(p) { return p.length > 0; });
+
+        // If we are in /renter/ or /admin/, remove the last part to get the root
+        if (parts.length > 0 && (parts[parts.length - 1] === 'renter' || parts[parts.length - 1] === 'admin')) {
+            parts.pop();
         }
-        if (projectRoot.length > 1 && projectRoot.charAt(projectRoot.length - 1) !== '/') {
-            projectRoot += '/';
+
+        // Build the root path
+        var root = '/';
+        if (parts.length > 0) {
+            root = '/' + parts.join('/') + '/';
         }
-        
-        var apiUrl = protocol + '//' + host + projectRoot + 'admin/location_tracker.php';
+
+        // Build the full API URL
+        var apiUrl = protocol + '//' + host + root + 'admin/location_tracker.php';
         console.log('[GPSTracker] API URL resolved to:', apiUrl);
         return apiUrl;
     }
@@ -169,8 +164,8 @@
             },
             {
                 enableHighAccuracy: true,
-                timeout: 30000,
-                maximumAge: 5000
+                timeout: 10000,          // shorter timeout
+                maximumAge: 1000         // only accept positions < 1 second old
             }
         );
 
