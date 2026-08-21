@@ -1,39 +1,72 @@
 # ============================================================
-# Allow access to location_tracker.php
+# .htaccess for Admin Folder - Allow all admin pages
 # ============================================================
 
-# Allow the file to be accessed
-<Files "location_tracker.php">
+# Enable FollowSymLinks for proper routing (if needed)
+Options +FollowSymLinks
+
+# Prevent directory listing (security)
+Options -Indexes
+
+# Allow access to all files in this directory
+# This includes .php, .html, .css, .js, images, etc.
+<FilesMatch "\.(php|html|css|js|png|jpg|jpeg|gif|ico|svg|webp)$">
     Require all granted
     Allow from all
     Satisfy Any
-</Files>
+</FilesMatch>
 
-# Disable ModSecurity for this file (if causing issues)
+# ============================================================
+# ModSecurity: Disable for all admin pages if it causes blocks
+# (If you only have issues on specific files, move this rule
+#  inside a <Files> block for those files)
+# ============================================================
 <IfModule mod_security.c>
     SecRuleEngine Off
 </IfModule>
 
-# Allow POST and GET requests
+# ============================================================
+# Allow GET and POST requests for all files
+# ============================================================
 <Limit GET POST>
     Require all granted
 </Limit>
 
-# Set proper headers for JSON responses
-<IfModule mod_headers.c>
-    Header set Access-Control-Allow-Origin "*"
-    Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
-    Header set Access-Control-Allow-Headers "Content-Type"
-</IfModule>
+# ============================================================
+# CORS Headers for location_tracker.php
+# (Allows the renter's JavaScript to POST from a different origin)
+# ============================================================
+<Files "location_tracker.php">
+    <IfModule mod_headers.c>
+        Header set Access-Control-Allow-Origin "*"
+        Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        Header set Access-Control-Allow-Headers "Content-Type"
+    </IfModule>
+</Files>
 
-# Disable caching for this file (so location updates are fresh)
-<FilesMatch "location_tracker\.php$">
-    Header set Cache-Control "no-cache, no-store, must-revalidate"
-    Header set Pragma "no-cache"
-    Header set Expires "0"
+# ============================================================
+# Disable caching for all PHP files
+# (Ensures admin sees latest data, especially for location updates)
+# ============================================================
+<FilesMatch "\.(php)$">
+    <IfModule mod_headers.c>
+        Header set Cache-Control "no-cache, no-store, must-revalidate"
+        Header set Pragma "no-cache"
+        Header set Expires "0"
+    </IfModule>
 </FilesMatch>
 
 # ============================================================
-# Handle 403 errors - redirect to a custom error or allow
+# Custom Error Pages
+# (Adjust paths if your admin folder is not at the root)
 # ============================================================
-ErrorDocument 403 /location_tracker.php
+ErrorDocument 403 /admin/admin_login.php
+ErrorDocument 404 /admin/dashboard.php
+
+# ============================================================
+# Protect sensitive logic files (optional – they are already
+# protected by admin_auth.php, but we can still restrict)
+# ============================================================
+<FilesMatch "^(admin_auth\.php|.*_logic\.php)$">
+    Require all granted
+</FilesMatch>
