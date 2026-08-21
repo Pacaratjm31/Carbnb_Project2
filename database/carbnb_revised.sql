@@ -212,3 +212,7 @@ CREATE TABLE IF NOT EXISTS inspect (
 -- VERIFICATION
 -- ============================================================
 SHOW TABLES;
+
+
+ALTER TABLE payments
+ADD UNIQUE KEY unique_booking_payment (booking_id);
