@@ -37,7 +37,7 @@ header('Content-Type: application/json; charset=utf-8');
 |
 */
 
-$secret_key = 'Sample API';
+$secret_key = getenv('PAYMONGO_SECRET_KEY') ?: '';
 
 
 /*

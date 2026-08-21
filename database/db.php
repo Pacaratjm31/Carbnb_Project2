@@ -1,9 +1,10 @@
 <?php
 
-$host = "localhost";
-$dbname = "carbnb";
-$username = "root";
-$password = "";
+$host = getenv('MYSQLHOST');
+$port = getenv('MYSQLPORT') ?: 3306;
+$dbname = getenv('MYSQLDATABASE');
+$username = getenv('MYSQLUSER');
+$password = getenv('MYSQLPASSWORD');
 
 function ensure_column(PDO $pdo, string $table, string $column, string $definition): void
 {
@@ -60,10 +61,10 @@ function ensure_table(PDO $pdo, string $table, string $definition): void
 try {
 
     $pdo = new PDO(
-        "mysql:host=$host;dbname=$dbname;charset=utf8",
-        $username,
-        $password
-    );
+    "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4",
+    $username,
+    $password
+);
 
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
