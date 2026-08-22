@@ -10,6 +10,42 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once __DIR__ . '/../database/db.php';
 require_once __DIR__ . '/helpers/location_helper.php';
 
+// ============================================================
+// REAL-TIME BRIDGE CONFIG
+// PHP cannot emit Socket.IO events directly (that's browser-only
+// JS). This sends a plain HTTP POST to a small endpoint on the
+// existing server.js, which then does the actual io.emit() to
+// admin browsers. LOCALHOST ONLY for now, per instructions -
+// this will need to change if/when this is deployed anywhere
+// other than local XAMPP testing.
+// ============================================================
+define('REALTIME_SERVER_URL', 'http://localhost:3000/notify-location');
+define('REALTIME_SERVER_TIMEOUT_SECONDS', 1); // fail fast, never block the renter
+
+function notifyRealtimeServer($payload) {
+    $ch = curl_init(REALTIME_SERVER_URL);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => REALTIME_SERVER_TIMEOUT_SECONDS,
+        CURLOPT_CONNECTTIMEOUT => REALTIME_SERVER_TIMEOUT_SECONDS,
+    ]);
+    $result = curl_exec($ch);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($result === false) {
+        // Node.js server unreachable/down/slow. This is expected and
+        // fine if it's not running - MySQL already has the location
+        // saved, so nothing is lost. Just log it for visibility.
+        error_log('notifyRealtimeServer: could not reach Node.js server - ' . $error);
+        return false;
+    }
+    return true;
+}
+
 $pdo = $GLOBALS['pdo'] ?? null;
 
 if (!$pdo) {
@@ -128,6 +164,23 @@ if ($isPost && $action !== 'mark_read' && !$ajax) {
         
         $insertId = $pdo->lastInsertId();
         error_log("GPS Location saved: ID=$insertId, User=$user_id, Booking=$booking_id");
+        
+        // ============================================================
+        // REAL-TIME BRIDGE: Notify Node.js Socket.IO server
+        // MySQL save above is already complete and is the source of
+        // record. This is an additional, best-effort layer only - if
+        // the Node.js server is down or slow, we log it and continue
+        // normally. The renter's GPS tracking and the PHP response
+        // must never depend on this succeeding.
+        // ============================================================
+        notifyRealtimeServer([
+            'user_id' => $user_id,
+            'booking_id' => $booking_id,
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'accuracy' => $accuracy,
+            'recorded_at' => $recorded_at
+        ]);
         
         echo json_encode([
             'success' => true,
@@ -533,6 +586,9 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" 
           crossorigin=""></script>
+
+  <!-- Socket.IO real-time client (LOCALHOST for now, per instructions) -->
+  <script src="http://192.168.100.2:3000/socket.io/socket.io.js"></script>
   
   <script>
     // ============================================================
@@ -542,6 +598,7 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
     let map = null;
     let markers = [];
     let polylines = [];
+    let realtimeMarkers = {};
     let refreshTimer = null;
     let isFirstLoad = true;
     let lastUpdateTime = null;
@@ -558,6 +615,26 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
         const hash = (userId * 2654435761) % USER_COLORS.length;
         return USER_COLORS[hash];
     }
+
+    // ============================================================
+    // SOCKET.IO REAL-TIME CONNECTION
+    // Additional layer on top of the existing 2-second polling
+    // below. Polling stays as-is as a fallback and is NOT removed.
+    // ============================================================
+    const socket = io("http://192.168.100.2:3000");
+
+    socket.on("connect", function () {
+        console.log("Connected to Carbnb real-time server:", socket.id);
+    });
+
+    socket.on("disconnect", function () {
+        console.log("Disconnected from Carbnb real-time server");
+    });
+
+    socket.on("location_update", function (data) {
+        console.log("Real-time location received:", data);
+        updateRenterMarker(data);
+    });
 
     // ============================================================
     // DOM ELEMENTS
@@ -697,6 +774,73 @@ if ($ajax && ($_GET['section'] ?? '') === 'notifications') {
       markers = [];
       polylines.forEach(l => { try { l.remove(); } catch(e) {} });
       polylines = [];
+    }
+
+    // ============================================================
+    // REAL-TIME MOVING MARKER (Socket.IO)
+    // Separate from the polling-based markers[] array above - this
+    // moves an existing marker via setLatLng() instead of clearing
+    // and redrawing everything, for instant, smooth movement.
+    // ============================================================
+    function updateRenterMarker(data) {
+
+        if (!map) {
+            return;
+        }
+
+        const userId = data.user_id;
+
+        const latitude = parseFloat(data.latitude);
+        const longitude = parseFloat(data.longitude);
+
+        if (
+            !Number.isFinite(latitude) ||
+            !Number.isFinite(longitude)
+        ) {
+            console.warn("Invalid real-time coordinates:", data);
+            return;
+        }
+
+        const position = [latitude, longitude];
+        const color = getUserColor(userId);
+
+        // Create marker if this renter does not have one yet
+        if (!realtimeMarkers[userId]) {
+
+            const marker = L.circleMarker(position, {
+                radius: 9,
+                fillColor: color,
+                color: "#fff",
+                weight: 2,
+                fillOpacity: 0.95
+            }).addTo(map);
+
+            marker.bindPopup(
+                `<strong>Renter #${userId}</strong><br>` +
+                `Live location`
+            );
+
+            realtimeMarkers[userId] = marker;
+
+        } else {
+            // Move existing marker - same renter, no duplicate marker
+            realtimeMarkers[userId].setLatLng(position);
+        }
+
+        // Center map on the first real-time renter
+        if (Object.keys(realtimeMarkers).length === 1) {
+            map.setView(position, 16);
+        }
+
+        if (lastUpdateInfo) {
+            lastUpdateInfo.textContent =
+                "Live GPS: " + new Date().toLocaleTimeString();
+        }
+
+        if (statusEl) {
+            statusEl.className = "tracker-status success";
+            statusEl.innerHTML = "🟢 Real-time location received";
+        }
     }
 
     // ============================================================

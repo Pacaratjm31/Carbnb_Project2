@@ -1,7 +1,16 @@
 <?php
 // Admin Authentication and Shared Functions
 
-session_start();
+// ==========================================================
+// SAFE SESSION START
+// Prevent "session_start(): Ignoring session_start() because
+// a session is already active" when this file is included by
+// another PHP file that already started the session.
+// ==========================================================
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 require_once __DIR__ . '/../database/db.php';
 

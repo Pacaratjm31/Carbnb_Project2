@@ -1,18 +1,29 @@
 /**
  * ============================================================
- * GPS TRACKER - Cross-page continuous GPS tracking
- * 
- * FIXED: Simplified URL builder to always find admin/location_tracker.php
- *        relative to the website root.
+ * CARBNB GPS TRACKER
+ * ============================================================
+ *
+ * Purpose:
+ * - Continuously track renter GPS location
+ * - Send location to admin/location_tracker.php
+ * - Keep tracking active while navigating between pages
+ * - Store booking_id in sessionStorage
+ *
+ * LIVE SERVER:
+ * https://carbnb.infinityfree.me/
+ *
+ * API:
+ * https://carbnb.infinityfree.me/admin/location_tracker.php
  * ============================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // ============================================================
     // PRIVATE VARIABLES
     // ============================================================
+
     let watchId = null;
     let isTracking = false;
     let currentBookingId = null;
@@ -22,244 +33,597 @@
     const STORAGE_KEY = 'carbnb_gps_tracking';
 
     // ============================================================
-    // PRIVATE: Build reliable API URL (Fixed)
+    // API URL
     // ============================================================
+
     function getApiUrl() {
-        var protocol = window.location.protocol;
-        var host = window.location.host;
-        var pathname = window.location.pathname;
 
-        // Split path into parts
-        var parts = pathname.split('/').filter(function(p) { return p.length > 0; });
+        // Uses the current website domain automatically.
+        //
+        // On InfinityFree:
+        // https://carbnb.infinityfree.me/admin/location_tracker.php
 
-        // If we are in /renter/ or /admin/, remove the last part to get the root
-        if (parts.length > 0 && (parts[parts.length - 1] === 'renter' || parts[parts.length - 1] === 'admin')) {
-            parts.pop();
-        }
+        var apiUrl = window.location.origin + '/admin/location_tracker.php';
 
-        // Build the root path
-        var root = '/';
-        if (parts.length > 0) {
-            root = '/' + parts.join('/') + '/';
-        }
+        console.log('[GPSTracker] API URL:', apiUrl);
 
-        // Build the full API URL
-        var apiUrl = protocol + '//' + host + root + 'admin/location_tracker.php';
-        console.log('[GPSTracker] API URL resolved to:', apiUrl);
         return apiUrl;
     }
 
     // ============================================================
-    // PRIVATE: Send GPS Location to Server
+    // SEND LOCATION TO SERVER
     // ============================================================
+
     function sendLocationToServer(position, bookingId) {
+
         if (!bookingId || bookingId < 1) {
-            console.error('[GPSTracker] Invalid booking_id:', bookingId);
-            return Promise.reject(new Error('Invalid booking_id for location tracking'));
+            console.error(
+                '[GPSTracker] Invalid booking_id:',
+                bookingId
+            );
+
+            return Promise.reject(
+                new Error('Invalid booking_id for location tracking')
+            );
         }
 
         var latitude = position.coords.latitude;
         var longitude = position.coords.longitude;
         var accuracy = position.coords.accuracy || 0;
-        var recorded_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+        var recorded_at = new Date()
+            .toISOString()
+            .slice(0, 19)
+            .replace('T', ' ');
 
         var apiUrl = getApiUrl();
 
         var formData = new URLSearchParams();
+
         formData.append('latitude', latitude);
         formData.append('longitude', longitude);
         formData.append('accuracy', accuracy);
         formData.append('recorded_at', recorded_at);
         formData.append('booking_id', bookingId);
 
-        console.log('[GPSTracker] Sending GPS for booking:', bookingId, 'lat:', latitude, 'lng:', longitude);
+        console.log(
+            '[GPSTracker] Sending GPS:',
+            {
+                booking_id: bookingId,
+                latitude: latitude,
+                longitude: longitude,
+                accuracy: accuracy,
+                recorded_at: recorded_at
+            }
+        );
 
         return fetch(apiUrl, {
             method: 'POST',
+
             headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Type':
+                    'application/x-www-form-urlencoded'
             },
+
             body: formData.toString()
+
         })
-        .then(function(response) {
+
+        .then(function (response) {
+
+            console.log(
+                '[GPSTracker] Server response:',
+                response.status,
+                response.statusText
+            );
+
             if (!response.ok) {
-                throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+
+                throw new Error(
+                    'HTTP ' +
+                    response.status +
+                    ': ' +
+                    response.statusText
+                );
             }
-            return response.json();
+
+            return response.text();
         })
-        .then(function(data) {
+
+        .then(function (text) {
+
+            console.log(
+                '[GPSTracker] Server raw response:',
+                text
+            );
+
+            var data;
+
+            try {
+
+                data = JSON.parse(text);
+
+            } catch (e) {
+
+                throw new Error(
+                    'Server returned invalid JSON: ' + text
+                );
+            }
+
             if (!data.success) {
+
                 if (data.stop_tracking) {
-                    console.log('[GPSTracker] Server reports booking is no longer active - stopping tracking.');
+
+                    console.log(
+                        '[GPSTracker] Server says booking is no longer active.'
+                    );
+
                     stop();
                 }
-                throw new Error(data.message || 'Server error');
+
+                throw new Error(
+                    data.message || 'Server error'
+                );
             }
-            console.log('[GPSTracker] Location saved successfully');
+
+            console.log(
+                '[GPSTracker] ✅ Location saved successfully'
+            );
+
             lastSentPosition = position;
+
             return data;
         });
     }
 
     // ============================================================
-    // PRIVATE: Clear Current Watch Only (preserves state)
+    // CLEAR CURRENT GPS WATCH
     // ============================================================
+
     function clearCurrentWatch() {
+
         if (watchId !== null) {
-            navigator.geolocation.clearWatch(watchId);
+
+            navigator.geolocation.clearWatch(
+                watchId
+            );
+
             watchId = null;
-            console.log('[GPSTracker] Current GPS watch cleared');
+
+            console.log(
+                '[GPSTracker] GPS watch cleared'
+            );
         }
+
         if (recoveryTimeout) {
+
             clearTimeout(recoveryTimeout);
+
             recoveryTimeout = null;
         }
+
         isTracking = false;
     }
 
     // ============================================================
-    // PRIVATE: Start the Watch (internal)
+    // START GPS WATCH
     // ============================================================
+
     function startWatch(bookingId) {
+
         if (!bookingId || bookingId < 1) {
-            console.error('[GPSTracker] Cannot start: invalid booking_id');
+
+            console.error(
+                '[GPSTracker] Cannot start GPS:',
+                'invalid booking_id'
+            );
+
             return;
         }
 
         if (!navigator.geolocation) {
-            console.error('[GPSTracker] Geolocation not supported by this browser');
+
+            console.error(
+                '[GPSTracker] Geolocation is not supported'
+            );
+
             return;
         }
 
         clearCurrentWatch();
-        console.log('[GPSTracker] Starting GPS watch for booking:', bookingId);
+
         currentBookingId = bookingId;
 
+        console.log(
+            '[GPSTracker] ================================='
+        );
+
+        console.log(
+            '[GPSTracker] Starting GPS tracking'
+        );
+
+        console.log(
+            '[GPSTracker] Booking ID:',
+            bookingId
+        );
+
+        console.log(
+            '[GPSTracker] ================================='
+        );
+
+        // ========================================================
+        // START CONTINUOUS GPS WATCH
+        // ========================================================
+
         watchId = navigator.geolocation.watchPosition(
-            function(position) {
-                console.log('[GPSTracker] GPS update received for booking:', bookingId);
-                sendLocationToServer(position, bookingId)
-                    .then(function() {
-                        // Success - nothing else needed
-                    })
-                    .catch(function(err) {
-                        console.warn('[GPSTracker] GPS save failed:', err.message);
-                    });
+
+            function (position) {
+
+                console.log(
+                    '[GPSTracker] 📍 GPS UPDATE RECEIVED'
+                );
+
+                console.log(
+                    '[GPSTracker] Latitude:',
+                    position.coords.latitude
+                );
+
+                console.log(
+                    '[GPSTracker] Longitude:',
+                    position.coords.longitude
+                );
+
+                console.log(
+                    '[GPSTracker] Accuracy:',
+                    position.coords.accuracy
+                );
+
+                sendLocationToServer(
+                    position,
+                    bookingId
+                )
+
+                .then(function (data) {
+
+                    console.log(
+                        '[GPSTracker] ✅ GPS sent successfully'
+                    );
+
+                })
+
+                .catch(function (error) {
+
+                    console.error(
+                        '[GPSTracker] ❌ GPS upload failed:',
+                        error.message
+                    );
+                });
             },
-            function(error) {
-                console.warn('[GPSTracker] GPS watch error:', error.code, error.message);
+
+            function (error) {
+
+                console.error(
+                    '[GPSTracker] ❌ GPS WATCH ERROR'
+                );
+
+                console.error(
+                    '[GPSTracker] Error code:',
+                    error.code
+                );
+
+                console.error(
+                    '[GPSTracker] Error message:',
+                    error.message
+                );
+
                 if (watchId !== null) {
-                    navigator.geolocation.clearWatch(watchId);
+
+                    navigator.geolocation.clearWatch(
+                        watchId
+                    );
+
                     watchId = null;
                 }
+
                 if (recoveryTimeout) {
-                    clearTimeout(recoveryTimeout);
+
+                    clearTimeout(
+                        recoveryTimeout
+                    );
                 }
-                recoveryTimeout = setTimeout(function() {
-                    if (!watchId && currentBookingId) {
-                        console.log('[GPSTracker] Recovering GPS tracking for booking:', currentBookingId);
-                        startWatch(currentBookingId);
-                    }
-                }, 5000);
+
+                // Try to recover GPS after 5 seconds.
+
+                recoveryTimeout = setTimeout(
+                    function () {
+
+                        if (
+                            !watchId &&
+                            currentBookingId
+                        ) {
+
+                            console.log(
+                                '[GPSTracker] 🔄 Recovering GPS tracking...'
+                            );
+
+                            startWatch(
+                                currentBookingId
+                            );
+                        }
+
+                    },
+                    5000
+                );
             },
+
             {
                 enableHighAccuracy: true,
-                timeout: 10000,          // shorter timeout
-                maximumAge: 1000         // only accept positions < 1 second old
+
+                // Maximum time to wait for a GPS update
+                timeout: 30000,
+
+                // Accept reasonably fresh GPS positions
+                maximumAge: 5000
             }
         );
 
         isTracking = true;
 
+        // ========================================================
+        // SAVE TRACKING STATE
+        // ========================================================
+
         try {
-            sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-                active: true,
-                booking_id: bookingId,
-                started_at: new Date().toISOString()
-            }));
-            console.log('[GPSTracker] State saved to sessionStorage');
+
+            sessionStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify({
+                    active: true,
+                    booking_id: bookingId,
+                    started_at:
+                        new Date().toISOString()
+                })
+            );
+
+            console.log(
+                '[GPSTracker] Tracking state saved'
+            );
+
         } catch (e) {
-            console.warn('[GPSTracker] Could not save tracking state:', e.message);
+
+            console.warn(
+                '[GPSTracker] Could not save tracking state:',
+                e.message
+            );
         }
 
-        console.log('[GPSTracker] GPS watch active, watchId:', watchId);
+        console.log(
+            '[GPSTracker] GPS watch active'
+        );
+
+        console.log(
+            '[GPSTracker] Watch ID:',
+            watchId
+        );
     }
 
     // ============================================================
-    // PUBLIC API
+    // PUBLIC: START
     // ============================================================
 
     function start(bookingId) {
+
         if (!bookingId || bookingId < 1) {
-            console.error('[GPSTracker] start() called with invalid booking_id:', bookingId);
+
+            console.error(
+                '[GPSTracker] start() invalid booking_id:',
+                bookingId
+            );
+
             return;
         }
-        console.log('[GPSTracker] start() called for booking:', bookingId);
+
+        console.log(
+            '[GPSTracker] start() called:',
+            bookingId
+        );
+
         startWatch(bookingId);
     }
 
+    // ============================================================
+    // PUBLIC: STOP
+    // ============================================================
+
     function stop() {
-        console.log('[GPSTracker] stop() called - permanently terminating tracking');
+
+        console.log(
+            '[GPSTracker] 🛑 STOPPING GPS TRACKING'
+        );
+
         clearCurrentWatch();
+
         currentBookingId = null;
+
+        lastSentPosition = null;
+
         try {
-            sessionStorage.removeItem(STORAGE_KEY);
-            console.log('[GPSTracker] sessionStorage cleared');
+
+            sessionStorage.removeItem(
+                STORAGE_KEY
+            );
+
+            console.log(
+                '[GPSTracker] Tracking state removed'
+            );
+
         } catch (e) {}
-        console.log('[GPSTracker] GPS tracking terminated');
+
+        console.log(
+            '[GPSTracker] GPS tracking terminated'
+        );
     }
 
+    // ============================================================
+    // PUBLIC: RESUME
+    // ============================================================
+
     function resume() {
-        console.log('[GPSTracker] resume() called');
+
+        console.log(
+            '[GPSTracker] resume() called'
+        );
+
         try {
-            var data = sessionStorage.getItem(STORAGE_KEY);
+
+            var data =
+                sessionStorage.getItem(
+                    STORAGE_KEY
+                );
+
             if (!data) {
-                console.log('[GPSTracker] No tracking state found in sessionStorage');
+
+                console.log(
+                    '[GPSTracker] No saved tracking state'
+                );
+
                 return false;
             }
-            var state = JSON.parse(data);
-            if (!state.active || !state.booking_id) {
-                console.log('[GPSTracker] Tracking state is inactive or missing booking_id');
+
+            var state =
+                JSON.parse(data);
+
+            if (
+                !state.active ||
+                !state.booking_id
+            ) {
+
+                console.log(
+                    '[GPSTracker] Saved tracking state invalid'
+                );
+
                 return false;
             }
-            console.log('[GPSTracker] Found tracking state for booking:', state.booking_id);
-            startWatch(state.booking_id);
+
+            console.log(
+                '[GPSTracker] Resuming booking:',
+                state.booking_id
+            );
+
+            startWatch(
+                state.booking_id
+            );
+
             return true;
+
         } catch (e) {
-            console.warn('[GPSTracker] Error resuming tracking:', e.message);
+
+            console.error(
+                '[GPSTracker] Resume error:',
+                e.message
+            );
+
             return false;
         }
     }
 
+    // ============================================================
+    // PUBLIC: IS ACTIVE
+    // ============================================================
+
     function isActive() {
-        return isTracking && watchId !== null;
+
+        return (
+            isTracking &&
+            watchId !== null
+        );
     }
 
+    // ============================================================
+    // PUBLIC: GET STATE
+    // ============================================================
+
     function getState() {
+
         try {
-            var data = sessionStorage.getItem(STORAGE_KEY);
+
+            var data =
+                sessionStorage.getItem(
+                    STORAGE_KEY
+                );
+
             if (data) {
+
                 return JSON.parse(data);
             }
-        } catch (e) {}
+
+        } catch (e) {
+
+            console.warn(
+                '[GPSTracker] Could not read state'
+            );
+        }
+
         return null;
     }
 
+    // ============================================================
+    // PUBLIC: GET BOOKING ID
+    // ============================================================
+
     function getBookingId() {
+
         return currentBookingId;
     }
 
     // ============================================================
-    // EXPOSE PUBLIC API
+    // EXPOSE GPS TRACKER
     // ============================================================
+
     window.GPSTracker = {
+
         start: start,
+
         stop: stop,
+
         resume: resume,
+
         isActive: isActive,
+
         getState: getState,
+
         getBookingId: getBookingId
     };
 
-    console.log('[GPSTracker] Loaded successfully. API available.');
+    // ============================================================
+    // INITIALIZE
+    // ============================================================
+
+    console.log(
+        '[GPSTracker] ================================='
+    );
+
+    console.log(
+        '[GPSTracker] GPS TRACKER LOADED'
+    );
+
+    console.log(
+        '[GPSTracker] Website:',
+        window.location.origin
+    );
+
+    console.log(
+        '[GPSTracker] API:',
+        getApiUrl()
+    );
+
+    console.log(
+        '[GPSTracker] Geolocation supported:',
+        !!navigator.geolocation
+    );
+
+    console.log(
+        '[GPSTracker] ================================='
+    );
+
 })();

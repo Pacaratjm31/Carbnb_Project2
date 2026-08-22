@@ -37,7 +37,7 @@ header('Content-Type: application/json; charset=utf-8');
 |
 */
 
-$secret_key = getenv('PAYMONGO_SECRET_KEY') ?: '';
+$secret_key = 'sk_live_Mw72uGtF8YesDSLEaSYTZdeC';
 
 
 /*
@@ -54,7 +54,7 @@ $secret_key = getenv('PAYMONGO_SECRET_KEY') ?: '';
 |
 */
 
-$app_url = 'https://carbnb.infinityfree.me';
+$app_url = 'http://localhost/Carbnb_Project2';
 
 
 /*
