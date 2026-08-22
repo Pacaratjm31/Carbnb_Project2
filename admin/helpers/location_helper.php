@@ -104,6 +104,18 @@ function getAllRentersWithStatus($pdo, $thresholdSeconds = LOCATION_ACTIVE_THRES
                 $inactiveCount++;
                 if ($status['reason'] === 'no_location') {
                     $noLocationCount++;
+                } elseif ($status['reason'] === 'old_location') {
+                    // Renter WAS actively tracking and has now gone stale
+                    // (e.g. turned off location, lost signal, closed the app).
+                    // This is the "accidentally turned off" case admins should
+                    // be warned about — not the same as never having tracked at all.
+                    createStatusChangeNotification(
+                        $pdo,
+                        $renter['user_id'],
+                        $renter['full_name'],
+                        'inactive',
+                        $renter['booking_id'] ?? null
+                    );
                 }
             }
         }

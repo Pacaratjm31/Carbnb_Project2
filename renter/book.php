@@ -835,9 +835,9 @@ denyBtn.onclick = function() {
 </script>
 
 <!-- ============================================================
-     GPS TRACKER - PATH IS CORRECT: ../js/gps_tracker.js
+     GPS TRACKER - PATH IS CORRECT: js/gps_tracker.js
      ============================================================ -->
-<script src="../js/gps_tracker.js?v=<?= time() ?>"></script>
+<script src="js/gps_tracker.js?v=<?= time() ?>"></script>
 
 </body>
 </html>

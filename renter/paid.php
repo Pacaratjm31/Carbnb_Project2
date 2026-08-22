@@ -1418,7 +1418,7 @@ if (
     <!-- GPS LOCATION TRACKING - RESUME ACROSS PAGES  -->
     <!-- ============================================ -->
 
-    <script src="../js/gps_tracker.js?v=<?= time() ?>"></script>
+    <script src="js/gps_tracker.js?v=<?= time() ?>"></script>
 
     <script>
 

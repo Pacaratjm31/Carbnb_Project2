@@ -37,7 +37,7 @@ header('Content-Type: application/json; charset=utf-8');
 |
 */
 
-$secret_key = 'sk_live_Mw72uGtF8YesDSLEaSYTZdeC';
+$secret_key = 'Sample API';
 
 
 /*

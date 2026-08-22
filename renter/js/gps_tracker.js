@@ -7,7 +7,7 @@
  * - Continuously track renter GPS location
  * - Send location to admin/location_tracker.php
  * - Keep tracking active while navigating between pages
- * - Store booking_id in sessionStorage
+ * - Store booking_id in localStorage (survives closing the app)
  *
  * LIVE SERVER:
  * https://carbnb.infinityfree.me/
@@ -29,8 +29,17 @@
     let currentBookingId = null;
     let recoveryTimeout = null;
     let lastSentPosition = null;
+    let heartbeatId = null;
 
     const STORAGE_KEY = 'carbnb_gps_tracking';
+
+    // watchPosition() only fires when the device's GPS position
+    // actually changes. A stationary renter can go 30+ seconds with
+    // no callback at all, even though location sharing is still
+    // fully on - without a heartbeat, the admin dashboard's "active"
+    // status (based on how recent the last saved point is) would
+    // incorrectly flag them as "inactive" just for not moving.
+    const HEARTBEAT_INTERVAL_MS = 15000;
 
     // ============================================================
     // API URL
@@ -202,6 +211,17 @@
             recoveryTimeout = null;
         }
 
+        if (heartbeatId) {
+
+            clearInterval(heartbeatId);
+
+            heartbeatId = null;
+
+            console.log(
+                '[GPSTracker] Heartbeat cleared'
+            );
+        }
+
         isTracking = false;
     }
 
@@ -370,12 +390,42 @@
         isTracking = true;
 
         // ========================================================
+        // HEARTBEAT - resend last known position on a fixed
+        // interval regardless of movement, so a stationary renter
+        // still shows as "active" on the admin dashboard.
+        // ========================================================
+
+        heartbeatId = setInterval(function () {
+
+            if (!lastSentPosition || !currentBookingId) {
+                return;
+            }
+
+            console.log(
+                '[GPSTracker] Heartbeat - resending last known position'
+            );
+
+            sendLocationToServer(lastSentPosition, currentBookingId)
+                .catch(function (err) {
+                    console.warn(
+                        '[GPSTracker] Heartbeat send failed:',
+                        err.message
+                    );
+                });
+
+        }, HEARTBEAT_INTERVAL_MS);
+
+        // ========================================================
         // SAVE TRACKING STATE
+        // localStorage (not sessionStorage) so tracking state
+        // survives the renter fully closing and reopening the
+        // browser/app across a multi-day booking, not just the
+        // current tab session.
         // ========================================================
 
         try {
 
-            sessionStorage.setItem(
+            localStorage.setItem(
                 STORAGE_KEY,
                 JSON.stringify({
                     active: true,
@@ -449,7 +499,7 @@
 
         try {
 
-            sessionStorage.removeItem(
+            localStorage.removeItem(
                 STORAGE_KEY
             );
 
@@ -477,7 +527,7 @@
         try {
 
             var data =
-                sessionStorage.getItem(
+                localStorage.getItem(
                     STORAGE_KEY
                 );
 
@@ -548,7 +598,7 @@
         try {
 
             var data =
-                sessionStorage.getItem(
+                localStorage.getItem(
                     STORAGE_KEY
                 );
 
@@ -577,6 +627,37 @@
     }
 
     // ============================================================
+    // PUBLIC: SEND HEARTBEAT NOW
+    // Lets an outside caller (e.g. a service worker) trigger an
+    // immediate resend of the last known position. Safe to call
+    // any time; no-op if tracking isn't active.
+    // ============================================================
+
+    function sendHeartbeatNow() {
+
+        if (!lastSentPosition || !currentBookingId) {
+
+            console.log(
+                '[GPSTracker] sendHeartbeatNow() called but nothing to send yet.'
+            );
+
+            return;
+        }
+
+        console.log(
+            '[GPSTracker] Manually triggered heartbeat send.'
+        );
+
+        sendLocationToServer(lastSentPosition, currentBookingId)
+            .catch(function (err) {
+                console.warn(
+                    '[GPSTracker] Manual heartbeat send failed:',
+                    err.message
+                );
+            });
+    }
+
+    // ============================================================
     // EXPOSE GPS TRACKER
     // ============================================================
 
@@ -592,7 +673,9 @@
 
         getState: getState,
 
-        getBookingId: getBookingId
+        getBookingId: getBookingId,
+
+        sendHeartbeatNow: sendHeartbeatNow
     };
 
     // ============================================================
